@@ -42,6 +42,7 @@ agent-server/
 ### Prerequisites
 
 - Python 3.12+
+
 - pip or conda package manager
 - OpenRouter API key
 
