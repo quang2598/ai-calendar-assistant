@@ -2,7 +2,7 @@
 Tool definitions for the LangChain AI Agent
 Define custom tools that the agent can use to accomplish tasks
 """
-from langchain_core.tools import tool
+from langchain.tools import tool
 from typing import Optional
 import json
 from datetime import datetime, timedelta
