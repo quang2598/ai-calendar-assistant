@@ -2,7 +2,6 @@
 FastAPI Application for AI Agent Microservice
 Main entry point for the backend service with LangChain agent
 """
-import os
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -12,9 +11,6 @@ from config import settings
 from logger_config import logger
 from models import ChatRequest, ChatResponse, ErrorResponse, HealthCheckResponse
 from llm_client import get_agent, initialize_agent
-
-# Create logs directory if it doesn't exist
-os.makedirs('logs', exist_ok=True)
 
 # Validate configuration on startup
 try:
