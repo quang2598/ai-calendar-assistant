@@ -3,8 +3,21 @@ Logging configuration for the AI Agent Microservice
 """
 import logging
 import logging.handlers
+import os
 import sys
 from config import settings
+
+
+def _resolve_log_dir() -> str:
+    """Resolve a writable log directory, falling back to /tmp for serverless."""
+    preferred = os.getenv("LOG_DIR", "logs")
+    try:
+        os.makedirs(preferred, exist_ok=True)
+        return preferred
+    except (OSError, PermissionError):
+        fallback = "/tmp/ai_agent_logs"
+        os.makedirs(fallback, exist_ok=True)
+        return fallback
 
 
 def setup_logging() -> logging.Logger:
@@ -36,8 +49,9 @@ def setup_logging() -> logging.Logger:
     
     # File handler
     try:
+        log_dir = _resolve_log_dir()
         file_handler = logging.handlers.RotatingFileHandler(
-            'logs/ai_agent.log',
+            os.path.join(log_dir, 'ai_agent.log'),
             maxBytes=10485760,  # 10MB
             backupCount=5
         )
