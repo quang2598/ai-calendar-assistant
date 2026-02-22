@@ -1,7 +1,7 @@
 """
 Pydantic models for request/response validation
 """
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, ConfigDict
 from typing import Optional
 from enum import Enum
 
@@ -18,13 +18,14 @@ class ChatMessage(BaseModel):
     role: MessageRole = Field(..., description="Role of the message sender")
     content: str = Field(..., description="Content of the message")
     
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "role": "user",
                 "content": "What is the weather today?"
             }
         }
+    )
 
 
 class ChatRequest(BaseModel):
@@ -62,8 +63,8 @@ class ChatRequest(BaseModel):
             raise ValueError('Question cannot be empty or whitespace only')
         return v.strip()
     
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "question": "How can I improve my productivity?",
                 "conversation_history": None,
@@ -71,6 +72,7 @@ class ChatRequest(BaseModel):
                 "max_tokens": 2048
             }
         }
+    )
 
 
 class ChatResponse(BaseModel):
@@ -86,8 +88,8 @@ class ChatResponse(BaseModel):
         description="List of tool calls made by the agent (if any)"
     )
     
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "answer": "To improve productivity, you can...",
                 "model": "qwen/qwen3-235b-a22b-2507",
@@ -104,6 +106,7 @@ class ChatResponse(BaseModel):
                 ]
             }
         }
+    )
 
 
 class ErrorResponse(BaseModel):
@@ -115,14 +118,15 @@ class ErrorResponse(BaseModel):
         description="Additional error details"
     )
     
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "error": "Invalid request",
                 "status_code": 400,
                 "details": "Question cannot be empty"
             }
         }
+    )
 
 
 class HealthCheckResponse(BaseModel):
@@ -130,10 +134,11 @@ class HealthCheckResponse(BaseModel):
     status: str = Field(..., description="Service status")
     version: str = Field(..., description="Service version")
     
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "status": "healthy",
                 "version": "1.0.0"
             }
         }
+    )

@@ -2,12 +2,11 @@
 LangChain-based LLM Client for AI Agent with Tool Calling Support
 Provides agent functionality with tool integration
 """
-import asyncio
+from typing import TypedDict
 from typing import Optional
 from langchain_openai import ChatOpenAI
-from langchain.agents.format_scratchpad.openai_tools import format_to_openai_tool_messages
-from langchain.agents.output_parsers.openai_tools import OpenAIToolsAgentOutputParser
-from langchain.agents import AgentExecutor, create_openai_tools_agent
+from langchain.agents import create_agent
+
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
 
@@ -16,6 +15,8 @@ from logger_config import logger
 from models import ChatMessage, MessageRole
 from tools import get_all_tools, get_tools_by_name
 
+class Context(TypedDict):
+    user_role: str
 
 class LangChainAgent:
     """
@@ -49,32 +50,18 @@ class LangChainAgent:
         
         logger.info(f"Agent initialized with {len(self.tools)} tools")
         
-        # Create the agent prompt
-        self.prompt = ChatPromptTemplate.from_messages([
-            ("system", """You are a helpful AI assistant with access to various tools.
-You can help users with calendar management, reminders, email, weather, and more.
-When the user asks for something that requires a tool, use the appropriate tool.
-Be helpful, clear, and concise in your responses.
-If you use a tool, explain what you're doing and the result."""),
-            MessagesPlaceholder(variable_name="chat_history"),
-            ("human", "{input}"),
-            MessagesPlaceholder(variable_name="agent_scratchpad"),
-        ])
+        self.prompt = "You are a helpful AI assistant with access to various tools. \
+            You can help users with calendar management, reminders, email, weather, and more. " \
+            "When the user asks for something that requires a tool, use the appropriate tool." \
+            "Be helpful, clear, and concise in your responses. If you use a tool, explain what you're doing and the result."
         
         # Create the agent using OpenAI tools agent
-        self.agent = create_openai_tools_agent(
-            self.llm,
-            self.tools,
-            self.prompt
-        )
-        
-        # Create the executor
-        self.executor = AgentExecutor(
-            agent=self.agent,
+        self.agent = create_agent(
+            model=self.llm,
             tools=self.tools,
-            verbose=settings.DEBUG,
-            return_intermediate_steps=True,
+            system_prompt=self.prompt
         )
+
         
         logger.info("LangChain Agent fully initialized")
     
@@ -114,18 +101,15 @@ If you use a tool, explain what you're doing and the result."""),
             if max_tokens is not None:
                 self.llm.max_tokens = max_tokens
             
-            # Execute the agent in an async context
-            # Note: AgentExecutor doesn't have async support, so we run in thread pool
-            result = await asyncio.to_thread(
-                self.executor.invoke,
-                {
-                    "input": question,
-                    "chat_history": chat_history,
-                }
-            )
+
+            result = self.agent.invoke({"messages": [{"role": "user", "content": question}]}, context = chat_history)
+            (print(result['messages'][1].content))
             
             # Extract the response
-            answer = result.get("output", "No response generated")
+            if result['messages'][1].content:
+                answer = result['messages'][1].content
+            else:
+                answer = "No response generated"
             
             # Extract tool calls from intermediate steps
             tool_calls = self._extract_tool_calls(result.get("intermediate_steps", []))
@@ -142,12 +126,7 @@ If you use a tool, explain what you're doing and the result."""),
                 },
                 "tool_calls": tool_calls,
             }
-        
-        except asyncio.TimeoutError:
-            error_msg = f"Request timeout after {settings.REQUEST_TIMEOUT} seconds"
-            logger.error(error_msg)
-            raise Exception(error_msg)
-        
+
         except Exception as e:
             logger.error(f"Agent error: {str(e)}", exc_info=True)
             raise
