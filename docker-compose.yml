@@ -1,8 +1,39 @@
 services:
-  - app:
+  backend:
+    build: ./backend
+    ports:
+      - "3000:3000"
+    environment:
+      - PORT=3000
+      - FIREBASE_SERVICE_ACCOUNT=${FIREBASE_SERVICE_ACCOUNT}
+      - AGENT_SERVER_URL=http://agent:8000
+      - NODE_ENV=production
+    depends_on:
+      agent:
+        condition: service_healthy
+    networks:
+      - app-network
 
-  - agent:
+  agent:
+    build: ./agent
+    ports:
+      - "8000:8000"
+    environment:
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - MODEL_NAME=${MODEL_NAME:-qwen/qwen3-235b-a22b-2507}
+      - MODEL_TEMPERATURE=${MODEL_TEMPERATURE:-0.7}
+      - MODEL_MAX_TOKENS=${MODEL_MAX_TOKENS:-2048}
+      - DEBUG=False
+      - LOG_LEVEL=INFO
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - app-network
 
-  - database:
-
-volumes:
+networks:
+  app-network:
+    driver: bridge
