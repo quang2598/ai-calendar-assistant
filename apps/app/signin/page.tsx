@@ -44,7 +44,7 @@ export default function SignInPage() {
     setIsSubmitting(true);
 
     try {
-      await signInWithEmail(email.trim(), password);
+      const temp = await signInWithEmail(email.trim(), password);
       router.replace("/");
     } catch (error) {
       setErrorMessage(getAuthErrorMessage(error));
