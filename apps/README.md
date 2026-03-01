@@ -18,6 +18,21 @@ Open [http://localhost:3000](http://localhost:3000) with your browser to see the
 
 You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
 
+## Firebase Session Cookie Auth
+
+This app now uses server-issued Firebase session cookies (`2 days`) for login persistence.
+Add these server environment variables to your local `.env`:
+
+```env
+FIREBASE_PROJECT_ID=your_firebase_project_id
+FIREBASE_CLIENT_EMAIL=your_service_account_client_email
+FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
+```
+
+Notes:
+- Keep `FIREBASE_PRIVATE_KEY` quoted and keep `\n` escaped in `.env`.
+- Do not expose these values with `NEXT_PUBLIC_` prefixes.
+
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
 
 ## Learn More
