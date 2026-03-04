@@ -1,51 +1,57 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# AI Calendar Assistant Frontend
 
-## Getting Started
+Next.js App Router UI with Redux Toolkit state management and Firebase Google auth.
 
-First, run the development server:
+## Run locally
 
 ```bash
+cd apps
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open `http://localhost:3000`.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Environment
 
-## Firebase Session Cookie Auth
-
-This app now uses server-issued Firebase session cookies (`2 days`) for login persistence.
-Add these server environment variables to your local `.env`:
+Create `apps/.env` from `apps/.env.example`:
 
 ```env
-FIREBASE_PROJECT_ID=your_firebase_project_id
-FIREBASE_CLIENT_EMAIL=your_service_account_client_email
-FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
+FIREBASE_API_KEY=
+FIREBASE_AUTH_DOMAIN=
+FIREBASE_PROJECT_ID=
+FIREBASE_STORAGE_BUCKET=
+FIREBASE_MESSAGING_SENDER_ID=
+FIREBASE_APP_ID=
 ```
 
-Notes:
-- Keep `FIREBASE_PRIVATE_KEY` quoted and keep `\n` escaped in `.env`.
-- Do not expose these values with `NEXT_PUBLIC_` prefixes.
+## Folder contract
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+- `app/`: route pages and layout only (UI entrypoints)
+- `src/components/`: reusable presentational components
+- `src/features/`: Redux slices, thunks, selectors by domain
+- `src/services/`: API/SDK wrappers (Firebase, HTTP, etc.)
+- `src/store/`: store setup, provider, typed hooks
+- `src/types/`: shared domain types
 
-## Learn More
+## Current routes
 
-To learn more about Next.js, take a look at the following resources:
+- `/auth/login`: Google login
+- `/auth/signup`: Google signup entrypoint
+- `/`: protected page (Hello World placeholder + sign out)
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Architecture rules
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+- Pages/components do not call Firebase SDK directly.
+- Pages/components do not call `fetch` directly for domain logic.
+- Async side effects live in thunks and call `src/services/*`.
+- Slices own state transitions and reducers only.
+- Components read state through selectors and dispatch actions/thunks.
 
-## Deploy on Vercel
+## Add a new feature
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+1. Add domain types in `src/types`.
+2. Add service methods in `src/services/<feature>`.
+3. Add `slice + thunks + selectors` in `src/features/<feature>`.
+4. Register reducer in `src/store/store.ts`.
+5. Build/compose UI in `app/*` and `src/components/*`.
