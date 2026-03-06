@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
-import AuthScreen from "@/src/components/auth/AuthScreen";
+import AuthScreen from "@/app/auth/AuthScreen";
 import {
   selectAuthError,
   selectAuthInitialized,

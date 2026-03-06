@@ -3,7 +3,7 @@
 import { useEffect, type ReactNode } from "react";
 import { Provider } from "react-redux";
 
-import { startAuthListener } from "@/src/features/auth/authThunks";
+import { startAuthListener, stopAuthListener } from "@/src/features/auth/authThunks";
 
 import { useAppDispatch } from "./hooks";
 import { store } from "./store";
@@ -17,6 +17,10 @@ function AuthListenerBootstrapper() {
 
   useEffect(() => {
     void dispatch(startAuthListener());
+
+    return () => {
+      stopAuthListener();
+    };
   }, [dispatch]);
 
   return null;

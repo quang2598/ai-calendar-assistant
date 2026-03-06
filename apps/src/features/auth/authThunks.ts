@@ -8,6 +8,8 @@ import {
 } from "@/src/services/auth/firebaseAuthService";
 import type { AuthUser } from "@/src/types/auth";
 
+import { resetChat } from "../chat/chatSlice";
+import { stopChatListeners } from "../chat/chatThunks";
 import { authChanged, authError, logoutLocal } from "./authSlice";
 
 let hasAttachedAuthListener = false;
@@ -27,9 +29,15 @@ export const startAuthListener = createAsyncThunk<
     try {
       authListenerUnsubscribe = listenToAuthChanges(
         (user) => {
+          if (!user) {
+            void dispatch(stopChatListeners());
+            dispatch(resetChat());
+          }
           dispatch(authChanged(user));
         },
         (error) => {
+          void dispatch(stopChatListeners());
+          dispatch(resetChat());
           dispatch(authError(normalizeFirebaseAuthError(error)));
           dispatch(authChanged(null));
         },

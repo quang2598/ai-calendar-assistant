@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect } from "react";
 
-import ChatPlaceholder from "@/src/components/chat/ChatPlaceholder";
+import ChatShell from "@/app/chat/ChatShell";
 import {
   selectAuthInitialized,
   selectAuthStatus,
@@ -11,6 +11,25 @@ import {
   selectIsAuthenticated,
 } from "@/src/features/auth/authSelectors";
 import { signOutUser } from "@/src/features/auth/authThunks";
+import {
+  selectActiveConversation,
+  selectActiveConversationId,
+  selectActiveConversationMessages,
+  selectActiveConversationMessagesError,
+  selectActiveConversationMessagesStatus,
+  selectComposerPlaceholderText,
+  selectConversations,
+  selectConversationsError,
+  selectConversationsStatus,
+} from "@/src/features/chat/chatSelectors";
+import {
+  setActiveConversation,
+} from "@/src/features/chat/chatSlice";
+import {
+  startConversationsListener,
+  startMessagesListener,
+  stopChatListeners,
+} from "@/src/features/chat/chatThunks";
 import { useAppDispatch, useAppSelector } from "@/src/hooks";
 
 function FullScreenSpinner() {
@@ -29,6 +48,15 @@ export default function HomePage() {
   const isAuthenticated = useAppSelector(selectIsAuthenticated);
   const status = useAppSelector(selectAuthStatus);
   const user = useAppSelector(selectAuthUser);
+  const conversations = useAppSelector(selectConversations);
+  const conversationsStatus = useAppSelector(selectConversationsStatus);
+  const conversationsError = useAppSelector(selectConversationsError);
+  const activeConversationId = useAppSelector(selectActiveConversationId);
+  const activeConversation = useAppSelector(selectActiveConversation);
+  const activeMessages = useAppSelector(selectActiveConversationMessages);
+  const activeMessagesStatus = useAppSelector(selectActiveConversationMessagesStatus);
+  const activeMessagesError = useAppSelector(selectActiveConversationMessagesError);
+  const composerPlaceholderText = useAppSelector(selectComposerPlaceholderText);
 
   useEffect(() => {
     if (initialized && !isAuthenticated) {
@@ -36,9 +64,28 @@ export default function HomePage() {
     }
   }, [initialized, isAuthenticated, router]);
 
+  useEffect(() => {
+    if (!(initialized && isAuthenticated && user?.uid)) {
+      return;
+    }
+
+    void dispatch(startConversationsListener(user.uid));
+
+    return () => {
+      void dispatch(stopChatListeners());
+    };
+  }, [dispatch, initialized, isAuthenticated, user?.uid]);
+
   async function handleSignOut() {
     await dispatch(signOutUser());
     router.replace("/auth/login");
+  }
+
+  function handleSelectConversation(conversationId: string) {
+    dispatch(setActiveConversation(conversationId));
+    if (user?.uid) {
+      void dispatch(startMessagesListener({ uid: user.uid, conversationId }));
+    }
   }
 
   if (!initialized) {
@@ -52,8 +99,18 @@ export default function HomePage() {
   const userLabel = user.displayName ?? user.email ?? "Signed-in user";
 
   return (
-    <ChatPlaceholder
+    <ChatShell
+      conversations={conversations}
+      activeConversationId={activeConversationId}
+      activeConversation={activeConversation}
+      activeMessages={activeMessages}
+      activeMessagesStatus={activeMessagesStatus}
+      activeMessagesError={activeMessagesError}
+      composerPlaceholderText={composerPlaceholderText}
+      conversationsStatus={conversationsStatus}
+      conversationsError={conversationsError}
       userLabel={userLabel}
+      onSelectConversation={handleSelectConversation}
       onSignOut={handleSignOut}
       isSigningOut={status === "authenticating"}
     />
