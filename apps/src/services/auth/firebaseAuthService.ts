@@ -1,4 +1,5 @@
 import {
+  getAdditionalUserInfo,
   onAuthStateChanged,
   signInWithPopup,
   signOut,
@@ -11,6 +12,10 @@ import type { AuthUser } from "@/src/types/auth";
 
 type AuthStateChangeHandler = (user: AuthUser | null) => void;
 type AuthStateErrorHandler = (error: unknown) => void;
+export type GoogleSignInResult = {
+  user: AuthUser | null;
+  isNewUser: boolean;
+};
 
 function projectFirebaseUser(user: User | null): AuthUser | null {
   if (!user) {
@@ -38,9 +43,22 @@ export function listenToAuthChanges(
   );
 }
 
-export async function signInWithGooglePopup(): Promise<AuthUser | null> {
+export async function signInWithGooglePopup(): Promise<GoogleSignInResult> {
   const credential = await signInWithPopup(auth, googleAuthProvider);
-  return projectFirebaseUser(credential.user);
+  const user = projectFirebaseUser(credential.user);
+  const additionalUserInfo = getAdditionalUserInfo(credential);
+
+  const hasCreationTime = Boolean(credential.user.metadata.creationTime);
+  const hasLastSignInTime = Boolean(credential.user.metadata.lastSignInTime);
+  const metadataSuggestsNewUser =
+    hasCreationTime &&
+    hasLastSignInTime &&
+    credential.user.metadata.creationTime === credential.user.metadata.lastSignInTime;
+
+  return {
+    user,
+    isNewUser: additionalUserInfo?.isNewUser ?? metadataSuggestsNewUser,
+  };
 }
 
 export async function signOutFromFirebase() {
