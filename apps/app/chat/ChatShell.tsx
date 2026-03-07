@@ -14,11 +14,17 @@ type ChatShellProps = {
   activeMessages: ConversationMessage[];
   activeMessagesStatus: AsyncStatus;
   activeMessagesError: string | null;
-  composerPlaceholderText: string;
+  composerText: string;
+  sendingError: string | null;
+  isSendingMessage: boolean;
+  isAssistantTyping: boolean;
   conversationsStatus: AsyncStatus;
   conversationsError: string | null;
   userLabel: string;
   isSigningOut: boolean;
+  onStartNewConversation: () => void;
+  onComposerTextChange: (value: string) => void;
+  onSendMessage: () => void;
   onSelectConversation: (conversationId: string) => void;
   onSignOut: () => void;
 };
@@ -30,11 +36,17 @@ export default function ChatShell({
   activeMessages,
   activeMessagesStatus,
   activeMessagesError,
-  composerPlaceholderText,
+  composerText,
+  sendingError,
+  isSendingMessage,
+  isAssistantTyping,
   conversationsStatus,
   conversationsError,
   userLabel,
   isSigningOut,
+  onStartNewConversation,
+  onComposerTextChange,
+  onSendMessage,
   onSelectConversation,
   onSignOut,
 }: ChatShellProps) {
@@ -48,6 +60,7 @@ export default function ChatShell({
           conversationsError={conversationsError}
           userLabel={userLabel}
           isSigningOut={isSigningOut}
+          onStartNewConversation={onStartNewConversation}
           onSelectConversation={onSelectConversation}
           onSignOut={onSignOut}
         />
@@ -56,7 +69,12 @@ export default function ChatShell({
           activeMessages={activeMessages}
           activeMessagesStatus={activeMessagesStatus}
           activeMessagesError={activeMessagesError}
-          composerPlaceholderText={composerPlaceholderText}
+          composerText={composerText}
+          sendingError={sendingError}
+          isSendingMessage={isSendingMessage}
+          isAssistantTyping={isAssistantTyping}
+          onComposerTextChange={onComposerTextChange}
+          onSendMessage={onSendMessage}
         />
       </div>
     </main>

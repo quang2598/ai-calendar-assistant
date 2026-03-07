@@ -10,6 +10,13 @@ export const selectConversationsError = (state: RootState) =>
   state.chat.conversationsError;
 export const selectActiveConversationId = (state: RootState) =>
   state.chat.activeConversationId;
+export const selectComposerText = (state: RootState) => state.chat.composerText;
+export const selectSendingStatus = (state: RootState) => state.chat.sendingStatus;
+export const selectSendingError = (state: RootState) => state.chat.sendingError;
+export const selectIsAssistantTyping = (state: RootState) =>
+  state.chat.isAssistantTyping;
+export const selectIsSendingMessage = (state: RootState) =>
+  state.chat.sendingStatus === "loading";
 export const selectActiveConversation = (state: RootState) =>
   state.chat.conversations.find(
     (conversation) => conversation.id === state.chat.activeConversationId,

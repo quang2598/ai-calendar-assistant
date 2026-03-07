@@ -5,6 +5,11 @@ import {
   listenToConversations,
   listenToMessages,
 } from "@/src/services/chat/firestoreChatService";
+import {
+  ChatApiServiceError,
+  sendMessageToServer,
+} from "@/src/services/chat/chatApiService";
+import type { RootState } from "@/src/store";
 
 import {
   conversationsFailed,
@@ -13,6 +18,10 @@ import {
   messagesFailed,
   messagesLoading,
   messagesReceived,
+  sendingFailed,
+  sendingStarted,
+  sendingSucceeded,
+  setActiveConversation,
 } from "./chatSlice";
 
 let conversationsUnsubscribe: (() => void) | null = null;
@@ -34,6 +43,18 @@ function normalizeFirestoreError(error: unknown): string {
   }
 
   return "An unexpected Firestore error occurred.";
+}
+
+function normalizeChatApiError(error: unknown): string {
+  if (error instanceof ChatApiServiceError) {
+    return error.message;
+  }
+
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  return "An unexpected chat API error occurred.";
 }
 
 function teardownConversationsListener() {
@@ -152,3 +173,58 @@ export const stopChatListeners = createAsyncThunk(
     teardownMessagesListener();
   },
 );
+
+export const stopMessagesListener = createAsyncThunk(
+  "chat/stopMessagesListener",
+  async () => {
+    teardownMessagesListener();
+  },
+);
+
+export const sendComposerMessage = createAsyncThunk<
+  void,
+  { uid: string },
+  { state: RootState; rejectValue: string }
+>("chat/sendComposerMessage", async ({ uid }, { dispatch, getState, rejectWithValue }) => {
+  const state = getState();
+  if (state.chat.sendingStatus === "loading") {
+    return;
+  }
+
+  const message = state.chat.composerText.trim();
+  const conversationId = state.chat.activeConversationId;
+
+  if (!message) {
+    const error = "Message cannot be empty.";
+    dispatch(sendingFailed(error));
+    return rejectWithValue(error);
+  }
+
+  dispatch(sendingStarted());
+
+  try {
+    const data = await sendMessageToServer({
+      uid,
+      conversationId,
+      message,
+    });
+
+    const currentActiveConversationId = getState().chat.activeConversationId;
+    if (currentActiveConversationId !== data.conversationId) {
+      dispatch(setActiveConversation(data.conversationId));
+    }
+
+    await dispatch(
+      startMessagesListener({
+        uid,
+        conversationId: data.conversationId,
+      }),
+    );
+
+    dispatch(sendingSucceeded());
+  } catch (error) {
+    const message = normalizeChatApiError(error);
+    dispatch(sendingFailed(message));
+    return rejectWithValue(message);
+  }
+});

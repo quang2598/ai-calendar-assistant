@@ -14,8 +14,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Starter Project",
-  description: "Fresh Next.js App Router starter",
+  title: "VietCalenAI",
+  description: "VietCalenAI chat interface",
 };
 
 export default function RootLayout({

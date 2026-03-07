@@ -21,6 +21,10 @@ export type ChatState = {
   conversationsStatus: AsyncStatus;
   conversationsError: string | null;
   activeConversationId: string | null;
+  composerText: string;
+  sendingStatus: AsyncStatus;
+  sendingError: string | null;
+  isAssistantTyping: boolean;
   messagesByConversationId: Record<string, ConversationMessage[]>;
   messagesStatusByConversationId: Record<string, AsyncStatus>;
   messagesErrorByConversationId: Record<string, string | null>;

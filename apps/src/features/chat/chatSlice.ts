@@ -11,6 +11,10 @@ const initialState: ChatState = {
   conversationsStatus: "idle",
   conversationsError: null,
   activeConversationId: null,
+  composerText: "",
+  sendingStatus: "idle",
+  sendingError: null,
+  isAssistantTyping: false,
   messagesByConversationId: {},
   messagesStatusByConversationId: {},
   messagesErrorByConversationId: {},
@@ -44,6 +48,40 @@ const chatSlice = createSlice({
     },
     setActiveConversation(state, action: PayloadAction<string | null>) {
       state.activeConversationId = action.payload;
+      state.sendingError = null;
+      state.isAssistantTyping = false;
+      state.sendingStatus = "idle";
+    },
+    startNewConversationDraft(state) {
+      state.activeConversationId = null;
+      state.composerText = "";
+      state.sendingStatus = "idle";
+      state.sendingError = null;
+      state.isAssistantTyping = false;
+    },
+    setComposerText(state, action: PayloadAction<string>) {
+      state.composerText = action.payload;
+    },
+    sendingStarted(state) {
+      state.sendingStatus = "loading";
+      state.sendingError = null;
+      state.isAssistantTyping = true;
+      state.composerText = "";
+    },
+    sendingSucceeded(state) {
+      state.sendingStatus = "succeeded";
+      state.sendingError = null;
+      state.isAssistantTyping = false;
+    },
+    sendingFailed(state, action: PayloadAction<string>) {
+      state.sendingStatus = "failed";
+      state.sendingError = action.payload;
+      state.isAssistantTyping = false;
+    },
+    clearSendingState(state) {
+      state.sendingStatus = "idle";
+      state.sendingError = null;
+      state.isAssistantTyping = false;
     },
     messagesLoading(state, action: PayloadAction<string>) {
       const conversationId = action.payload;
@@ -77,6 +115,7 @@ const chatSlice = createSlice({
 });
 
 export const {
+  clearSendingState,
   conversationsFailed,
   conversationsLoading,
   conversationsReceived,
@@ -84,7 +123,12 @@ export const {
   messagesLoading,
   messagesReceived,
   resetChat,
+  sendingFailed,
+  sendingStarted,
+  sendingSucceeded,
+  setComposerText,
   setActiveConversation,
+  startNewConversationDraft,
 } = chatSlice.actions;
 
 export default chatSlice.reducer;
