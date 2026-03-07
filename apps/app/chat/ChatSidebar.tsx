@@ -1,11 +1,14 @@
 import type { AsyncStatus, ConversationSummary } from "@/src/types/chat";
+import UserAvatar from "./UserAvatar";
 
 type ChatSidebarProps = {
   conversations: ConversationSummary[];
   activeConversationId: string | null;
   conversationsStatus: AsyncStatus;
   conversationsError: string | null;
-  userLabel: string;
+  userDisplayName: string | null;
+  userEmail: string | null;
+  userPhotoURL: string | null;
   isSigningOut: boolean;
   onStartNewConversation: () => void;
   onSelectConversation: (conversationId: string) => void;
@@ -17,12 +20,16 @@ export default function ChatSidebar({
   activeConversationId,
   conversationsStatus,
   conversationsError,
-  userLabel,
+  userDisplayName,
+  userEmail,
+  userPhotoURL,
   isSigningOut,
   onStartNewConversation,
   onSelectConversation,
   onSignOut,
 }: ChatSidebarProps) {
+  const userLabel = userDisplayName ?? userEmail ?? "Signed-in user";
+
   return (
     <aside className="hidden w-80 flex-col border-r border-slate-800/90 bg-slate-900/80 p-4 lg:flex">
       <div>
@@ -75,7 +82,20 @@ export default function ChatSidebar({
       </div>
 
       <div className="rounded-xl border border-slate-800 bg-slate-900 p-3">
-        <p className="truncate text-sm font-medium text-slate-100">{userLabel}</p>
+        <div className="flex items-center gap-3">
+          <UserAvatar
+            photoURL={userPhotoURL}
+            displayName={userDisplayName}
+            email={userEmail}
+            sizeClassName="h-10 w-10"
+          />
+          <div className="min-w-0">
+            <p className="truncate text-sm font-medium text-slate-100">{userLabel}</p>
+            {userEmail ? (
+              <p className="truncate text-xs text-slate-400">{userEmail}</p>
+            ) : null}
+          </div>
+        </div>
         <button
           type="button"
           onClick={onSignOut}

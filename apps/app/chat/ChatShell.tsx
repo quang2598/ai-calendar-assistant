@@ -20,7 +20,9 @@ type ChatShellProps = {
   isAssistantTyping: boolean;
   conversationsStatus: AsyncStatus;
   conversationsError: string | null;
-  userLabel: string;
+  userDisplayName: string | null;
+  userEmail: string | null;
+  userPhotoURL: string | null;
   isSigningOut: boolean;
   onStartNewConversation: () => void;
   onComposerTextChange: (value: string) => void;
@@ -42,7 +44,9 @@ export default function ChatShell({
   isAssistantTyping,
   conversationsStatus,
   conversationsError,
-  userLabel,
+  userDisplayName,
+  userEmail,
+  userPhotoURL,
   isSigningOut,
   onStartNewConversation,
   onComposerTextChange,
@@ -58,7 +62,9 @@ export default function ChatShell({
           activeConversationId={activeConversationId}
           conversationsStatus={conversationsStatus}
           conversationsError={conversationsError}
-          userLabel={userLabel}
+          userDisplayName={userDisplayName}
+          userEmail={userEmail}
+          userPhotoURL={userPhotoURL}
           isSigningOut={isSigningOut}
           onStartNewConversation={onStartNewConversation}
           onSelectConversation={onSelectConversation}

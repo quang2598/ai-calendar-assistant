@@ -123,7 +123,9 @@ export default function HomePage() {
     return <FullScreenSpinner />;
   }
 
-  const userLabel = user.displayName ?? user.email ?? "Signed-in user";
+  const userDisplayName = user.displayName;
+  const userEmail = user.email;
+  const userPhotoURL = user.photoURL;
 
   return (
     <ChatShell
@@ -139,7 +141,9 @@ export default function HomePage() {
       isAssistantTyping={isAssistantTyping}
       conversationsStatus={conversationsStatus}
       conversationsError={conversationsError}
-      userLabel={userLabel}
+      userDisplayName={userDisplayName}
+      userEmail={userEmail}
+      userPhotoURL={userPhotoURL}
       onStartNewConversation={handleStartNewConversation}
       onComposerTextChange={handleComposerTextChange}
       onSendMessage={handleSendMessage}
