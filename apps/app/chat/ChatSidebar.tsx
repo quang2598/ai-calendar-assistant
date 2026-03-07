@@ -7,6 +7,7 @@ type ChatSidebarProps = {
   conversationsError: string | null;
   userLabel: string;
   isSigningOut: boolean;
+  onStartNewConversation: () => void;
   onSelectConversation: (conversationId: string) => void;
   onSignOut: () => void;
 };
@@ -18,6 +19,7 @@ export default function ChatSidebar({
   conversationsError,
   userLabel,
   isSigningOut,
+  onStartNewConversation,
   onSelectConversation,
   onSignOut,
 }: ChatSidebarProps) {
@@ -26,6 +28,13 @@ export default function ChatSidebar({
       <div>
         <p className="text-xs uppercase tracking-[0.2em] text-cyan-300">Conversations</p>
         <h2 className="mt-2 text-lg font-semibold text-slate-100">Your chats</h2>
+        <button
+          type="button"
+          onClick={onStartNewConversation}
+          className="mt-4 w-full rounded-xl border border-cyan-400/40 bg-cyan-400/10 px-3 py-2 text-sm font-semibold text-cyan-200 transition hover:border-cyan-300/60 hover:bg-cyan-400/20"
+        >
+          + New Chat
+        </button>
       </div>
 
       <div className="mt-4 flex-1 space-y-2 overflow-y-auto pr-1">

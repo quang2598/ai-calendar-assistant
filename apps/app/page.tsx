@@ -17,17 +17,24 @@ import {
   selectActiveConversationMessages,
   selectActiveConversationMessagesError,
   selectActiveConversationMessagesStatus,
-  selectComposerPlaceholderText,
+  selectComposerText,
   selectConversations,
   selectConversationsError,
   selectConversationsStatus,
+  selectIsAssistantTyping,
+  selectIsSendingMessage,
+  selectSendingError,
 } from "@/src/features/chat/chatSelectors";
 import {
+  setComposerText,
   setActiveConversation,
+  startNewConversationDraft,
 } from "@/src/features/chat/chatSlice";
 import {
+  sendComposerMessage,
   startConversationsListener,
   startMessagesListener,
+  stopMessagesListener,
   stopChatListeners,
 } from "@/src/features/chat/chatThunks";
 import { useAppDispatch, useAppSelector } from "@/src/hooks";
@@ -56,7 +63,10 @@ export default function HomePage() {
   const activeMessages = useAppSelector(selectActiveConversationMessages);
   const activeMessagesStatus = useAppSelector(selectActiveConversationMessagesStatus);
   const activeMessagesError = useAppSelector(selectActiveConversationMessagesError);
-  const composerPlaceholderText = useAppSelector(selectComposerPlaceholderText);
+  const composerText = useAppSelector(selectComposerText);
+  const sendingError = useAppSelector(selectSendingError);
+  const isSendingMessage = useAppSelector(selectIsSendingMessage);
+  const isAssistantTyping = useAppSelector(selectIsAssistantTyping);
 
   useEffect(() => {
     if (initialized && !isAuthenticated) {
@@ -88,6 +98,23 @@ export default function HomePage() {
     }
   }
 
+  function handleStartNewConversation() {
+    dispatch(startNewConversationDraft());
+    void dispatch(stopMessagesListener());
+  }
+
+  function handleComposerTextChange(value: string) {
+    dispatch(setComposerText(value));
+  }
+
+  function handleSendMessage() {
+    if (!user?.uid) {
+      return;
+    }
+
+    void dispatch(sendComposerMessage({ uid: user.uid }));
+  }
+
   if (!initialized) {
     return <FullScreenSpinner />;
   }
@@ -106,10 +133,16 @@ export default function HomePage() {
       activeMessages={activeMessages}
       activeMessagesStatus={activeMessagesStatus}
       activeMessagesError={activeMessagesError}
-      composerPlaceholderText={composerPlaceholderText}
+      composerText={composerText}
+      sendingError={sendingError}
+      isSendingMessage={isSendingMessage}
+      isAssistantTyping={isAssistantTyping}
       conversationsStatus={conversationsStatus}
       conversationsError={conversationsError}
       userLabel={userLabel}
+      onStartNewConversation={handleStartNewConversation}
+      onComposerTextChange={handleComposerTextChange}
+      onSendMessage={handleSendMessage}
       onSelectConversation={handleSelectConversation}
       onSignOut={handleSignOut}
       isSigningOut={status === "authenticating"}
