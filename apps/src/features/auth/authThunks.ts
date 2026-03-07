@@ -1,11 +1,15 @@
 import { createAsyncThunk } from "@reduxjs/toolkit";
-
 import {
   listenToAuthChanges,
   normalizeFirebaseAuthError,
   signInWithGooglePopup,
   signOutFromFirebase,
 } from "@/src/services/auth/firebaseAuthService";
+import {
+  createUserProfile,
+  normalizeUserProfileError,
+  updateUserLastLogin,
+} from "@/src/services/user/userProfileService";
 import type { AuthUser } from "@/src/types/auth";
 
 import { resetChat } from "../chat/chatSlice";
@@ -60,17 +64,30 @@ export const signInWithGoogle = createAsyncThunk<
   void,
   { rejectValue: string }
 >("auth/signInWithGoogle", async (_, { rejectWithValue }) => {
+  let signInResult: Awaited<ReturnType<typeof signInWithGooglePopup>>;
+
   try {
-    const nextUser = await signInWithGooglePopup();
-
-    if (!nextUser) {
-      return rejectWithValue("Could not read Google user.");
-    }
-
-    return nextUser;
+    signInResult = await signInWithGooglePopup();
   } catch (error) {
     return rejectWithValue(normalizeFirebaseAuthError(error));
   }
+
+  const { user: nextUser, isNewUser } = signInResult;
+  if (!nextUser) {
+    return rejectWithValue("Could not read Google user.");
+  }
+
+  try {
+    if (isNewUser) {
+      await createUserProfile(nextUser);
+    } else {
+      await updateUserLastLogin(nextUser.uid);
+    }
+  } catch (error) {
+    return rejectWithValue(normalizeUserProfileError(error));
+  }
+
+  return nextUser;
 });
 
 export const signOutUser = createAsyncThunk<void, void, { rejectValue: string }>(
