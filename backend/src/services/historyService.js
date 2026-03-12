@@ -1,17 +1,23 @@
 const ConversationHistory = require('../models/ConversationHistory');
 const ApiError = require('../utils/ApiError');
 
-const createConversation = async ({ sessionId, userId, messages, metadata }) => {
-  return await ConversationHistory.create({
-    sessionId,
-    userId,
-    messages: messages || [],
-    metadata: metadata || {},
-  });
+const ensureConversation = async (uid, conversationId) => {
+  if (!conversationId) {
+    return await ConversationHistory.createConversation(uid);
+  }
+  const existing = await ConversationHistory.findById(uid, conversationId);
+  if (!existing) {
+    throw new ApiError(404, 'Conversation not found');
+  }
+  return conversationId;
 };
 
-const listConversations = async (userId, { page = 1, limit = 20 } = {}) => {
-  const { conversations, total } = await ConversationHistory.findByUserId(userId, { page, limit });
+const saveMessage = async ({ uid, conversationId, role, text }) => {
+  return await ConversationHistory.saveMessage({ uid, conversationId, role, text });
+};
+
+const listConversations = async (uid, { page = 1, limit = 20 } = {}) => {
+  const { conversations, total } = await ConversationHistory.findByUid(uid, { page, limit });
   return {
     conversations,
     pagination: {
@@ -23,24 +29,20 @@ const listConversations = async (userId, { page = 1, limit = 20 } = {}) => {
   };
 };
 
-const getConversation = async (id) => {
-  const conversation = await ConversationHistory.findById(id);
+const getConversation = async (uid, conversationId) => {
+  const conversation = await ConversationHistory.findById(uid, conversationId);
   if (!conversation) {
     throw new ApiError(404, 'Conversation not found');
   }
   return conversation;
 };
 
-const appendMessages = async (id, messages) => {
-  const conversation = await ConversationHistory.appendMessages(id, messages);
-  if (!conversation) {
-    throw new ApiError(404, 'Conversation not found');
-  }
-  return conversation;
+const getMessages = async (uid, conversationId) => {
+  return await ConversationHistory.getMessages(uid, conversationId);
 };
 
-const deleteConversation = async (id) => {
-  const conversation = await ConversationHistory.deleteById(id);
+const deleteConversation = async (uid, conversationId) => {
+  const conversation = await ConversationHistory.deleteById(uid, conversationId);
   if (!conversation) {
     throw new ApiError(404, 'Conversation not found');
   }
@@ -48,9 +50,10 @@ const deleteConversation = async (id) => {
 };
 
 module.exports = {
-  createConversation,
+  ensureConversation,
+  saveMessage,
   listConversations,
   getConversation,
-  appendMessages,
+  getMessages,
   deleteConversation,
 };

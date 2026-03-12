@@ -1,0 +1,31 @@
+{
+  "functions": {
+    "source": "backend",
+    "ignore": [
+      "tests",
+      "coverage",
+      "Dockerfile",
+      "docker-compose.yml",
+      ".env",
+      ".env.*",
+      "node_modules"
+    ]
+  },
+  "firestore": {
+    "indexes": "backend/firestore.indexes.json"
+  },
+  "hosting": {
+    "public": "public",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ],
+    "rewrites": [
+      {
+        "source": "**",
+        "destination": "/index.html"
+      }
+    ]
+  }
+}

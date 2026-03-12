@@ -2,7 +2,10 @@
   "name": "general-request-service",
   "version": "1.0.0",
   "description": "General Request Service for AI Calendar Assistant — handles conversation history and proxies to Agent Server",
-  "main": "src/server.js",
+  "main": "index.js",
+  "engines": {
+    "node": "20"
+  },
   "scripts": {
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
@@ -21,6 +24,7 @@
     "dotenv": "^16.4.0",
     "express": "^4.21.0",
     "firebase-admin": "^13.0.0",
+    "firebase-functions": "^6.3.0",
     "morgan": "^1.10.0"
   },
   "devDependencies": {

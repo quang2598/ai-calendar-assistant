@@ -30,11 +30,19 @@ class ChatMessage(BaseModel):
 
 class ChatRequest(BaseModel):
     """Request model for the chat endpoint"""
-    question: str = Field(
+    message: str = Field(
         ...,
         min_length=1,
         max_length=5000,
-        description="The user's question"
+        description="The user's message"
+    )
+    conversationId: Optional[str] = Field(
+        default=None,
+        description="Conversation ID"
+    )
+    uid: Optional[str] = Field(
+        default=None,
+        description="User ID from backend auth"
     )
     conversation_history: Optional[list[ChatMessage]] = Field(
         default=None,
@@ -56,17 +64,19 @@ class ChatRequest(BaseModel):
         le=8000,
         description="Maximum tokens in response"
     )
-    
-    @field_validator('question')
-    def question_not_empty(cls, v):
+
+    @field_validator('message')
+    def message_not_empty(cls, v):
         if not v or not v.strip():
-            raise ValueError('Question cannot be empty or whitespace only')
+            raise ValueError('Message cannot be empty or whitespace only')
         return v.strip()
-    
+
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
-                "question": "How can I improve my productivity?",
+                "message": "How can I improve my productivity?",
+                "conversationId": "conv-001",
+                "uid": "user123",
                 "conversation_history": None,
                 "temperature": 0.7,
                 "max_tokens": 2048

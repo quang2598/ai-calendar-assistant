@@ -177,14 +177,14 @@ async def chat(request: ChatRequest):
         HTTPException: If there's an error processing the request
     """
     try:
-        logger.info(f"Chat request received. Question length: {len(request.question)}")
-        
+        logger.info(f"Chat request received. Message length: {len(request.message)}")
+
         # Get the agent
         agent = get_agent()
-        
+
         # Call the agent
         result = await agent.chat(
-            question=request.question,
+            question=request.message,
             conversation_history=request.conversation_history,
             model=request.model,
             temperature=request.temperature,
