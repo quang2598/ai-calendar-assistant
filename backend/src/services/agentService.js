@@ -9,7 +9,13 @@ const agentClient = axios.create({
 
 const chat = async (payload) => {
   try {
-    const response = await agentClient.post('/api/chat', payload);
+    // Map internal fields to agent server's expected format
+    const agentPayload = {
+      message: payload.message,
+      ...(payload.conversationId && { conversationId: payload.conversationId }),
+      ...(payload.uid && { uid: payload.uid }),
+    };
+    const response = await agentClient.post('/api/chat', agentPayload);
     return response.data;
   } catch (err) {
     if (err.response) {

@@ -1,105 +1,126 @@
 const { getDb } = require('../config/firebase');
-const { FieldValue } = require('firebase-admin/firestore');
 
-const COLLECTION = 'conversations';
+/**
+ * Firestore structure (matches frontend mock server):
+ *   users/{uid}/conversations/{conversationId}            → { createdAt, lastUpdated, title }
+ *   users/{uid}/conversations/{conversationId}/messages   → { createdAt, role, text }
+ */
 
-const getCollection = () => getDb().collection(COLLECTION);
+const getUserConversationsCol = (uid) =>
+  getDb().collection('users').doc(uid).collection('conversations');
 
-const create = async (data) => {
-  if (Array.isArray(data)) {
-    const results = [];
-    for (const item of data) {
-      results.push(await create(item));
-    }
-    return results;
-  }
+const getMessagesCol = (uid, conversationId) =>
+  getUserConversationsCol(uid).doc(conversationId).collection('messages');
 
+function pad2(value) {
+  return value.toString().padStart(2, '0');
+}
+
+function formatConversationTitle(date = new Date()) {
+  const year = date.getFullYear();
+  const month = pad2(date.getMonth() + 1);
+  const day = pad2(date.getDate());
+  const hour = pad2(date.getHours());
+  const minute = pad2(date.getMinutes());
+  const second = pad2(date.getSeconds());
+  return `Conversation on ${year}${month}${day}-${hour}${minute}${second}`;
+}
+
+/**
+ * Create a new conversation document under users/{uid}/conversations
+ * Returns the new conversationId.
+ */
+const createConversation = async (uid) => {
   const now = new Date().toISOString();
-  const doc = {
-    sessionId: data.sessionId,
-    userId: data.userId,
-    messages: (data.messages || []).map((m) => ({
-      role: m.role,
-      content: m.content,
-      timestamp: m.timestamp || now,
-    })),
-    metadata: {
-      source: (data.metadata && data.metadata.source) || 'web',
-      agentModel: (data.metadata && data.metadata.agentModel) || null,
-    },
+  const col = getUserConversationsCol(uid);
+  const ref = await col.add({
     createdAt: now,
-    updatedAt: now,
-  };
-
-  const ref = await getCollection().add(doc);
-  return { id: ref.id, ...doc };
+    lastUpdated: now,
+    title: formatConversationTitle(),
+  });
+  return ref.id;
 };
 
-const findByUserId = async (userId, { page = 1, limit = 20 } = {}) => {
-  const offset = (page - 1) * limit;
+/**
+ * Save a single message to users/{uid}/conversations/{conversationId}/messages
+ * Returns the new message document id.
+ */
+const saveMessage = async ({ uid, conversationId, role, text }) => {
+  const now = new Date().toISOString();
+  const col = getMessagesCol(uid, conversationId);
+  const ref = await col.add({
+    createdAt: now,
+    role,
+    text,
+  });
 
-  const [snapshot, countSnapshot] = await Promise.all([
-    getCollection()
-      .where('userId', '==', userId)
-      .orderBy('updatedAt', 'desc')
-      .offset(offset)
-      .limit(limit)
-      .get(),
-    getCollection()
-      .where('userId', '==', userId)
-      .count()
-      .get(),
-  ]);
+  // Update lastUpdated on the conversation
+  await getUserConversationsCol(uid).doc(conversationId).update({
+    lastUpdated: now,
+  });
 
-  const conversations = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
-  const total = countSnapshot.data().count;
-
-  return { conversations, total };
+  return ref.id;
 };
 
-const findById = async (id) => {
-  const doc = await getCollection().doc(id).get();
+/**
+ * Get a conversation document by id
+ */
+const findById = async (uid, conversationId) => {
+  const doc = await getUserConversationsCol(uid).doc(conversationId).get();
   if (!doc.exists) return null;
   return { id: doc.id, ...doc.data() };
 };
 
-const appendMessages = async (id, messages) => {
-  const docRef = getCollection().doc(id);
-  const doc = await docRef.get();
+/**
+ * List conversations for a user, ordered by lastUpdated desc
+ */
+const findByUid = async (uid, { page = 1, limit = 20 } = {}) => {
+  const offset = (page - 1) * limit;
+  const col = getUserConversationsCol(uid);
+
+  const [snapshot, countSnapshot] = await Promise.all([
+    col.orderBy('lastUpdated', 'desc').offset(offset).limit(limit).get(),
+    col.count().get(),
+  ]);
+
+  const conversations = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+  const total = countSnapshot.data().count;
+  return { conversations, total };
+};
+
+/**
+ * Get all messages for a conversation
+ */
+const getMessages = async (uid, conversationId) => {
+  const snapshot = await getMessagesCol(uid, conversationId)
+    .orderBy('createdAt', 'asc')
+    .get();
+  return snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+};
+
+/**
+ * Delete a conversation and its messages subcollection
+ */
+const deleteById = async (uid, conversationId) => {
+  const convRef = getUserConversationsCol(uid).doc(conversationId);
+  const doc = await convRef.get();
   if (!doc.exists) return null;
 
-  const now = new Date().toISOString();
-  const newMessages = messages.map((m) => ({
-    role: m.role,
-    content: m.content,
-    timestamp: m.timestamp || now,
-  }));
+  // Delete all messages in subcollection
+  const messagesSnapshot = await getMessagesCol(uid, conversationId).get();
+  const batch = getDb().batch();
+  messagesSnapshot.docs.forEach((msgDoc) => batch.delete(msgDoc.ref));
+  batch.delete(convRef);
+  await batch.commit();
 
-  await docRef.update({
-    messages: FieldValue.arrayUnion(...newMessages),
-    updatedAt: now,
-  });
-
-  const updated = await docRef.get();
-  return { id: updated.id, ...updated.data() };
+  return { id: doc.id, ...doc.data() };
 };
 
-const deleteById = async (id) => {
-  const docRef = getCollection().doc(id);
-  const doc = await docRef.get();
-  if (!doc.exists) return null;
-  const data = { id: doc.id, ...doc.data() };
-  await docRef.delete();
-  return data;
+module.exports = {
+  createConversation,
+  saveMessage,
+  findById,
+  findByUid,
+  getMessages,
+  deleteById,
 };
-
-const countDocuments = async (filter = {}) => {
-  let query = getCollection();
-  for (const [field, value] of Object.entries(filter)) {
-    query = query.where(field, '==', value);
-  }
-  const snapshot = await query.count().get();
-  return snapshot.data().count;
-};
-
-module.exports = { create, findByUserId, findById, appendMessages, deleteById, countDocuments };

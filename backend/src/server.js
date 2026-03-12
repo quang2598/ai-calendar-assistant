@@ -7,14 +7,14 @@ const start = async () => {
   try {
     initializeFirebase();
     console.log('Connected to Firestore');
-
-    app.listen(config.port, () => {
-      console.log(`General Request Service running on port ${config.port}`);
-    });
   } catch (err) {
-    console.error('Failed to start server:', err.message);
-    process.exit(1);
+    console.warn('Firestore not available:', err.message);
+    console.warn('Server will start without Firestore (auth & history disabled)');
   }
+
+  app.listen(config.port, () => {
+    console.log(`General Request Service running on port ${config.port}`);
+  });
 };
 
 start();
