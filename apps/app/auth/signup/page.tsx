@@ -21,6 +21,8 @@ function getAuthErrorMessage(error: string | null) {
   const errorMap: Record<string, string> = {
     "auth/popup-closed-by-user": "Google sign-up was canceled.",
     "auth/too-many-requests": "Too many attempts. Please try again later.",
+    "auth/invalid-credential":
+      "Google sign-up failed due to invalid credentials configuration. Check Firebase Google auth setup.",
   };
 
   return errorMap[error] ?? "Could not create your account. Please try again.";
@@ -50,6 +52,7 @@ export default function SignupPage() {
     try {
       await dispatch(signInWithGoogle()).unwrap();
       router.replace("/");
+    } catch {
     } finally {
       setSubmitting(false);
     }

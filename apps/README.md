@@ -23,6 +23,13 @@ NEXT_PUBLIC_FIREBASE_PROJECT_ID=
 NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=
 NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=
 NEXT_PUBLIC_FIREBASE_APP_ID=
+FIREBASE_PROJECT_ID=
+FIREBASE_CLIENT_EMAIL=
+FIREBASE_PRIVATE_KEY=
+GOOGLE_OAUTH_CLIENT_ID=
+GOOGLE_OAUTH_CLIENT_SECRET=
+GOOGLE_OAUTH_REDIRECT_URI=
+GOOGLE_OAUTH_STATE_SECRET=
 ```
 
 ## Folder contract
@@ -73,6 +80,54 @@ Logout/auth-null path:
 1. Auth listener dispatches `stopChatListeners`.
 2. Auth listener dispatches `resetChat`.
 3. Chat state and active subscriptions are cleaned.
+
+## Google Calendar OAuth flow
+
+- Frontend button calls `POST /api/integrations/google-calendar/connect` with Firebase ID token.
+- Backend verifies Firebase ID token using Firebase Admin and extracts `uid`.
+- Backend builds Google OAuth URL with signed state (`uid`, nonce, timestamp).
+- User grants consent on Google OAuth screen.
+- Google redirects to `/api/integrations/google-calendar/callback` with `code` and `state`.
+- Backend verifies state signature and age, exchanges code for tokens, and persists tokens to:
+  - `/users/{uid}/tokens/google`
+- Refresh token is stored server-side only. Client never reads or stores refresh token.
+
+## Firestore rules for token protection
+
+Apply these rules in Firebase Console so browser clients cannot read/write token docs:
+
+```rules
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /users/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+
+      match /tokens/{tokenId} {
+        allow read, write: if false;
+      }
+
+      match /conversations/{conversationId} {
+        allow read, write: if request.auth != null && request.auth.uid == userId;
+
+        match /messages/{messageId} {
+          allow read, write: if request.auth != null && request.auth.uid == userId;
+        }
+      }
+    }
+  }
+}
+```
+
+Important: remove any previous recursive wildcard rule like
+`match /users/{userId}/{document=**}` because that would expose `/tokens/*` to clients.
+
+## Integration verification checklist
+
+1. Click `Connect Google Calendar` in sidebar.
+2. Complete Google consent and return to app.
+3. Confirm doc exists at `/users/{uid}/tokens/google` with metadata and refresh token.
+4. Confirm browser client cannot read `/users/{uid}/tokens/google` (permission denied).
+5. Confirm chat features still work after OAuth setup.
 
 ## Add a new feature
 

@@ -1,9 +1,11 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 
 import ChatShell from "@/app/chat/ChatShell";
+import { auth } from "@/src/lib/firebase";
 import {
   selectAuthInitialized,
   selectAuthStatus,
@@ -50,6 +52,9 @@ function FullScreenSpinner() {
 export default function HomePage() {
   const dispatch = useAppDispatch();
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const [isConnectingCalendar, setIsConnectingCalendar] = useState(false);
+  const [calendarConnectError, setCalendarConnectError] = useState<string | null>(null);
 
   const initialized = useAppSelector(selectAuthInitialized);
   const isAuthenticated = useAppSelector(selectIsAuthenticated);
@@ -115,6 +120,54 @@ export default function HomePage() {
     void dispatch(sendComposerMessage({ uid: user.uid }));
   }
 
+  async function handleConnectGoogleCalendar() {
+    const currentUser = auth.currentUser;
+    if (!currentUser) {
+      setCalendarConnectError("User is not authenticated.");
+      return;
+    }
+
+    setCalendarConnectError(null);
+    setIsConnectingCalendar(true);
+
+    try {
+      const idToken = await currentUser.getIdToken();
+      const response = await fetch("/api/integrations/google-calendar/connect", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${idToken}`,
+          "x-oauth-mode": "json",
+        },
+      });
+
+      if (!response.ok) {
+        let message = "Could not start Google Calendar connection.";
+        try {
+          const payload = (await response.json()) as {
+            error?: { message?: string };
+          };
+          message = payload.error?.message ?? message;
+        } catch {
+          message = "Could not start Google Calendar connection.";
+        }
+
+        throw new Error(message);
+      }
+
+      const payload = (await response.json()) as { url?: string };
+      if (!payload.url) {
+        throw new Error("Connect endpoint did not return an authorization URL.");
+      }
+
+      window.location.assign(payload.url);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Could not connect Google Calendar.";
+      setCalendarConnectError(message);
+      setIsConnectingCalendar(false);
+    }
+  }
+
   if (!initialized) {
     return <FullScreenSpinner />;
   }
@@ -126,6 +179,19 @@ export default function HomePage() {
   const userDisplayName = user.displayName;
   const userEmail = user.email;
   const userPhotoURL = user.photoURL;
+  const callbackStatus = searchParams.get("googleCalendar");
+  const callbackCode = searchParams.get("code");
+  const callbackResult = searchParams.get("result");
+
+  const calendarConnectedMessage =
+    callbackStatus === "connected"
+      ? callbackResult === "REFRESH_TOKEN_REUSED"
+        ? "Google Calendar connected. Existing refresh token was reused."
+        : "Google Calendar connected successfully."
+      : null;
+  const callbackErrorMessage =
+    callbackStatus === "error" ? `Google Calendar connection failed: ${callbackCode}.` : null;
+  const calendarErrorMessage = calendarConnectError ?? callbackErrorMessage;
 
   return (
     <ChatShell
@@ -144,6 +210,10 @@ export default function HomePage() {
       userDisplayName={userDisplayName}
       userEmail={userEmail}
       userPhotoURL={userPhotoURL}
+      isConnectingCalendar={isConnectingCalendar}
+      onConnectGoogleCalendar={handleConnectGoogleCalendar}
+      calendarConnectionError={calendarErrorMessage}
+      calendarConnectionSuccess={calendarConnectedMessage}
       onStartNewConversation={handleStartNewConversation}
       onComposerTextChange={handleComposerTextChange}
       onSendMessage={handleSendMessage}
