@@ -268,6 +268,12 @@ async function saveMessage(params: {
   return extractDocumentId(created.name);
 }
 
+export type AgentChatResponse = {
+  responseMessage: {
+    text: string;
+  };
+}
+
 export async function processMockChatRequest(
   request: MockChatRequest,
   idToken: string,
@@ -294,10 +300,29 @@ export async function processMockChatRequest(
       idToken,
     });
 
-    const delayMs = randomDelayMs(2000, 5000);
-    await wait(delayMs);
+    // const delayMs = randomDelayMs(2000, 5000);
+    // await wait(delayMs);
+    // const responseText = nextResponseText();
 
-    const responseText = nextResponseText();
+    const response = await fetch("http://localhost:8082/agent/send-chat", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      cache: "no-store",
+      body: JSON.stringify({uid: auth.uid, conversationId, message: text}),
+    });
+
+    let body: AgentChatResponse;
+    let responseText: string = "";
+    
+    try {
+      body = (await response.json()) as AgentChatResponse;
+      responseText = body.responseMessage.text;
+    } catch {
+      responseText = "Something went wrong. Please try again"
+    }
+
     const responseMessageId = await saveMessage({
       uid: auth.uid,
       conversationId,

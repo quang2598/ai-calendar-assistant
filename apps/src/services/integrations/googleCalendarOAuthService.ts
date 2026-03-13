@@ -1,6 +1,6 @@
 const GOOGLE_OAUTH_AUTHORIZE_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 const GOOGLE_OAUTH_TOKEN_URL = "https://oauth2.googleapis.com/token";
-const CALENDAR_EVENTS_SCOPE = "https://www.googleapis.com/auth/calendar.events";
+const CALENDAR_EVENTS_SCOPE = "https://www.googleapis.com/auth/calendar";
 
 type GoogleTokenSuccessResponse = {
   access_token: string;
