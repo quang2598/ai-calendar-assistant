@@ -12,8 +12,8 @@ run-agent:
 
 run-unit-test-agent:
 	@echo "Running agent locally..."
-	cd agent && \
-	pytest
+	cd agent && PYTHONPATH=src \
+	pytest --cache-clear
 
 run-app:
 	@echo "Running agent locally..."
