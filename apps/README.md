@@ -30,6 +30,7 @@ GOOGLE_OAUTH_CLIENT_ID=
 GOOGLE_OAUTH_CLIENT_SECRET=
 GOOGLE_OAUTH_REDIRECT_URI=
 GOOGLE_OAUTH_STATE_SECRET=
+AGENT_CHAT_URL=http://localhost:8082/agent/send-chat
 ```
 
 ## Folder contract
@@ -91,6 +92,13 @@ Logout/auth-null path:
 - Backend verifies state signature and age, exchanges code for tokens, and persists tokens to:
   - `/users/{uid}/tokens/google`
 - Refresh token is stored server-side only. Client never reads or stores refresh token.
+
+## External agent endpoint
+
+- Mock chat orchestration calls the agent backend through `AGENT_CHAT_URL`.
+- Local default:
+  - `http://localhost:8082/agent/send-chat`
+- Keep this server-only. UI components and pages should continue talking only to this app's own routes.
 
 ## Firestore rules for token protection
 

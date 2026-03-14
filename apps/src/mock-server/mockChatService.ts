@@ -1,10 +1,12 @@
 import type { ChatMessageRole } from "@/src/types/chat";
+import {
+  AgentChatServiceError,
+  requestAgentChatResponse,
+} from "@/src/services/chat/agentChatService";
 
 import { MockServerError, toMockServerError } from "./errors";
 import { getAuthContextByUid } from "./mockAuthService";
 import type { MockChatRequest, MockChatResponse } from "./types";
-
-let responseCounter = 0;
 
 type FirestoreDocument = {
   name?: string;
@@ -34,22 +36,6 @@ export function formatConversationTitle(date: Date = new Date()): string {
   const second = pad2(date.getSeconds());
 
   return `Conversation on ${year}${month}${day}-${hour}${minute}${second}`;
-}
-
-function randomDelayMs(minMs: number, maxMs: number): number {
-  const range = maxMs - minMs + 1;
-  return minMs + Math.floor(Math.random() * range);
-}
-
-function wait(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
-}
-
-function nextResponseText(): string {
-  responseCounter += 1;
-  return `Response ${responseCounter}`;
 }
 
 function normalizeServiceError(error: unknown): MockServerError {
@@ -268,10 +254,23 @@ async function saveMessage(params: {
   return extractDocumentId(created.name);
 }
 
-export type AgentChatResponse = {
-  responseMessage: {
-    text: string;
-  };
+const FALLBACK_AGENT_RESPONSE_TEXT = "Something went wrong. Please try again";
+
+async function resolveAgentResponseText(params: {
+  uid: string;
+  conversationId: string;
+  message: string;
+}): Promise<string> {
+  try {
+    const agentResponse = await requestAgentChatResponse(params);
+    return agentResponse.responseMessage.text;
+  } catch (error) {
+    if (error instanceof AgentChatServiceError) {
+      return FALLBACK_AGENT_RESPONSE_TEXT;
+    }
+
+    throw error;
+  }
 }
 
 export async function processMockChatRequest(
@@ -300,28 +299,11 @@ export async function processMockChatRequest(
       idToken,
     });
 
-    // const delayMs = randomDelayMs(2000, 5000);
-    // await wait(delayMs);
-    // const responseText = nextResponseText();
-
-    const response = await fetch("http://localhost:8082/agent/send-chat", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      cache: "no-store",
-      body: JSON.stringify({uid: auth.uid, conversationId, message: text}),
+    const responseText = await resolveAgentResponseText({
+      uid: auth.uid,
+      conversationId,
+      message: text,
     });
-
-    let body: AgentChatResponse;
-    let responseText: string = "";
-    
-    try {
-      body = (await response.json()) as AgentChatResponse;
-      responseText = body.responseMessage.text;
-    } catch {
-      responseText = "Something went wrong. Please try again"
-    }
 
     const responseMessageId = await saveMessage({
       uid: auth.uid,
