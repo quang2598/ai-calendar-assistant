@@ -1,0 +1,45 @@
+services:
+  general-request-service:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      - PORT=3000
+      - FIREBASE_SERVICE_ACCOUNT=${FIREBASE_SERVICE_ACCOUNT}
+      - AGENT_SERVER_URL=http://agent-server:8000
+      - NODE_ENV=production
+    networks:
+      - app-network
+
+  agent-server:
+    image: node:20-alpine
+    ports:
+      - "8000:8000"
+    working_dir: /app
+    entrypoint: ["node", "-e"]
+    command:
+      - |
+        const http = require('http');
+        const server = http.createServer((req, res) => {
+          res.setHeader('Content-Type', 'application/json');
+          if (req.url === '/api/health') {
+            res.end(JSON.stringify({ status: 'ok', service: 'agent-server-stub' }));
+          } else if (req.url === '/api/chat' && req.method === 'POST') {
+            let body = '';
+            req.on('data', chunk => body += chunk);
+            req.on('end', () => {
+              const data = JSON.parse(body);
+              res.end(JSON.stringify({ reply: 'Stub response to: ' + data.message }));
+            });
+          } else {
+            res.statusCode = 404;
+            res.end(JSON.stringify({ error: { message: 'Not found' } }));
+          }
+        });
+        server.listen(8000, () => console.log('Agent Server stub on port 8000'));
+    networks:
+      - app-network
+
+networks:
+  app-network:
+    driver: bridge
