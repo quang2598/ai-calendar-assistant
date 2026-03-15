@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import {
-  MockServerError,
-  processMockChatRequest,
-  toMockServerError,
-  type MockChatRequest,
-} from "@/src/mock-server";
+  BackendChatError,
+  processBackendChatRequest,
+  toBackendChatError,
+  type BackendChatRequest,
+} from "@/src/server/chat";
 
 export const runtime = "nodejs";
 
@@ -16,7 +16,7 @@ type ChatRequestBody = {
 };
 
 function errorResponse(error: unknown): NextResponse {
-  const normalized = toMockServerError(error);
+  const normalized = toBackendChatError(error);
 
   return NextResponse.json(
     {
@@ -33,11 +33,11 @@ async function parseJsonBody(request: NextRequest): Promise<ChatRequestBody> {
   try {
     return (await request.json()) as ChatRequestBody;
   } catch {
-    throw new MockServerError("Invalid JSON body.", "INVALID_JSON", 400);
+    throw new BackendChatError("Invalid JSON body.", "INVALID_JSON", 400);
   }
 }
 
-function parseBody(body: ChatRequestBody): MockChatRequest {
+function parseBody(body: ChatRequestBody): BackendChatRequest {
   const uid = typeof body.uid === "string" ? body.uid : "";
   const message = typeof body.message === "string" ? body.message : "";
 
@@ -47,7 +47,7 @@ function parseBody(body: ChatRequestBody): MockChatRequest {
   } else if (typeof body.conversationId === "string") {
     conversationId = body.conversationId;
   } else {
-    throw new MockServerError(
+    throw new BackendChatError(
       "conversationId must be a string or null.",
       "INVALID_CONVERSATION_ID",
       400,
@@ -64,7 +64,7 @@ function parseBody(body: ChatRequestBody): MockChatRequest {
 function parseBearerToken(request: NextRequest): string {
   const authorization = request.headers.get("authorization") ?? "";
   if (!authorization.startsWith("Bearer ")) {
-    throw new MockServerError(
+    throw new BackendChatError(
       "Missing Authorization bearer token.",
       "UNAUTHORIZED",
       401,
@@ -73,7 +73,7 @@ function parseBearerToken(request: NextRequest): string {
 
   const token = authorization.slice("Bearer ".length).trim();
   if (!token) {
-    throw new MockServerError("Invalid bearer token.", "UNAUTHORIZED", 401);
+    throw new BackendChatError("Invalid bearer token.", "UNAUTHORIZED", 401);
   }
 
   return token;
@@ -84,7 +84,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const body = await parseJsonBody(request);
     const payload = parseBody(body);
     const idToken = parseBearerToken(request);
-    const data = await processMockChatRequest(payload, idToken);
+    const data = await processBackendChatRequest(payload, idToken);
 
     return NextResponse.json({ data }, { status: 200 });
   } catch (error) {

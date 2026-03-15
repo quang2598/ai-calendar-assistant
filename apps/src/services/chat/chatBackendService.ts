@@ -44,7 +44,7 @@ function resolveBackendUrl(origin: string): string {
   const configured = process.env.CHAT_BACKEND_URL?.trim();
 
   if (!configured) {
-    return `${origin}/api/mock-server/chat`;
+    return `${origin}/api/backend/chat`;
   }
 
   if (configured.startsWith("http://") || configured.startsWith("https://")) {

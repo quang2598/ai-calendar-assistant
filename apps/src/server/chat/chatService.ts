@@ -4,9 +4,9 @@ import {
   requestAgentChatResponse,
 } from "@/src/services/chat/agentChatService";
 
-import { MockServerError, toMockServerError } from "./errors";
-import { getAuthContextByUid } from "./mockAuthService";
-import type { MockChatRequest, MockChatResponse } from "./types";
+import { getBackendAuthContextByUid } from "./chatAuth";
+import { BackendChatError, toBackendChatError } from "./chatErrors";
+import type { BackendChatRequest, BackendChatResponse } from "./chatTypes";
 
 type FirestoreDocument = {
   name?: string;
@@ -23,6 +23,8 @@ type FirestoreErrorBody = {
 const FIREBASE_PROJECT_ID =
   process.env.FIREBASE_PROJECT_ID?.trim() || process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID?.trim();
 
+const FALLBACK_AGENT_RESPONSE_TEXT = "Something went wrong. Please try again";
+
 function pad2(value: number): string {
   return value.toString().padStart(2, "0");
 }
@@ -38,13 +40,13 @@ export function formatConversationTitle(date: Date = new Date()): string {
   return `Conversation on ${year}${month}${day}-${hour}${minute}${second}`;
 }
 
-function normalizeServiceError(error: unknown): MockServerError {
-  return toMockServerError(error);
+function normalizeServiceError(error: unknown): BackendChatError {
+  return toBackendChatError(error);
 }
 
 function requireProjectId(): string {
   if (!FIREBASE_PROJECT_ID) {
-    throw new MockServerError(
+    throw new BackendChatError(
       "FIREBASE_PROJECT_ID (or NEXT_PUBLIC_FIREBASE_PROJECT_ID) is required.",
       "MISSING_FIREBASE_PROJECT_ID",
       500,
@@ -73,7 +75,7 @@ function encodePathSegment(value: string): string {
 
 function buildAuthHeaders(idToken: string): HeadersInit {
   if (!idToken.trim()) {
-    throw new MockServerError("Missing Firebase ID token.", "UNAUTHORIZED", 401);
+    throw new BackendChatError("Missing Firebase ID token.", "UNAUTHORIZED", 401);
   }
 
   return {
@@ -82,7 +84,7 @@ function buildAuthHeaders(idToken: string): HeadersInit {
   };
 }
 
-async function parseErrorResponse(response: Response): Promise<MockServerError> {
+async function parseErrorResponse(response: Response): Promise<BackendChatError> {
   let body: FirestoreErrorBody | null = null;
 
   try {
@@ -98,12 +100,12 @@ async function parseErrorResponse(response: Response): Promise<MockServerError> 
       ? body.error.message
       : `Firestore request failed with status ${response.status}.`;
 
-  return new MockServerError(message, code, response.status);
+  return new BackendChatError(message, code, response.status);
 }
 
 function extractDocumentId(documentName: string | undefined): string {
   if (!documentName) {
-    throw new MockServerError(
+    throw new BackendChatError(
       "Firestore response is missing document name.",
       "INVALID_FIRESTORE_RESPONSE",
       502,
@@ -113,7 +115,7 @@ function extractDocumentId(documentName: string | undefined): string {
   const parts = documentName.split("/");
   const id = parts[parts.length - 1];
   if (!id) {
-    throw new MockServerError(
+    throw new BackendChatError(
       "Firestore response has invalid document name.",
       "INVALID_FIRESTORE_RESPONSE",
       502,
@@ -254,8 +256,6 @@ async function saveMessage(params: {
   return extractDocumentId(created.name);
 }
 
-const FALLBACK_AGENT_RESPONSE_TEXT = "Something went wrong. Please try again";
-
 async function resolveAgentResponseText(params: {
   uid: string;
   conversationId: string;
@@ -273,16 +273,16 @@ async function resolveAgentResponseText(params: {
   }
 }
 
-export async function processMockChatRequest(
-  request: MockChatRequest,
+export async function processBackendChatRequest(
+  request: BackendChatRequest,
   idToken: string,
-): Promise<MockChatResponse> {
+): Promise<BackendChatResponse> {
   try {
-    const auth = getAuthContextByUid(request.uid);
+    const auth = getBackendAuthContextByUid(request.uid);
     const text = request.message.trim();
 
     if (!text) {
-      throw new MockServerError("message is required.", "INVALID_MESSAGE", 400);
+      throw new BackendChatError("message is required.", "INVALID_MESSAGE", 400);
     }
 
     const conversationId = await ensureConversation({

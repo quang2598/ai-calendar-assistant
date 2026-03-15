@@ -1,6 +1,6 @@
-# AI Calendar Assistant Frontend
+# AI Calendar Assistant
 
-Next.js App Router UI with Redux Toolkit state management and Firebase Google auth.
+Next.js App Router full-stack application with Redux Toolkit on the client, backend route handlers in `app/api`, and server-only domain logic in `src/server`.
 
 ## Run locally
 
@@ -35,21 +35,24 @@ AGENT_CHAT_URL=http://localhost:8082/agent/send-chat
 
 ## Folder contract
 
-- `app/`: route pages and layout only (UI entrypoints)
-- `app/components/`: route-local presentational components
-- `src/components/`: reusable presentational components
-- `src/features/`: Redux slices, thunks, selectors by domain
-- `src/services/`: API/SDK wrappers (Firebase, HTTP, etc.)
+- `app/`: App Router pages, layouts, and API route handlers
+- `src/features/`: client-side Redux slices, selectors, and thunks
+- `src/services/`: client/shared service adapters and SDK wrappers
+- `src/server/`: server-only backend business logic
+- `src/lib/`: SDK/bootstrap modules for Firebase client and Firebase Admin
+- `src/types/`: shared domain types
 - `src/store.ts`: Redux store setup
 - `src/provider.tsx`: React Redux provider/bootstrap
 - `src/hooks.ts`: typed Redux hooks
-- `src/types/`: shared domain types
 
 ## Current routes
 
 - `/auth/login`: Google login
 - `/auth/signup`: Google signup entrypoint
-- `/`: protected chat layout with conversation list + history + send placeholder
+- `/`: protected chat layout with conversation list + history
+- `/api/chat/send`: frontend-to-backend chat entrypoint
+- `/api/backend/chat`: backend chat endpoint
+- `/api/backend/auth`: backend auth-context helper
 
 ## Architecture rules
 
@@ -58,6 +61,8 @@ AGENT_CHAT_URL=http://localhost:8082/agent/send-chat
 - Async side effects live in thunks and call `src/services/*`.
 - Slices own state transitions and reducers only.
 - Components read state through selectors and dispatch actions/thunks.
+- API route handlers are thin HTTP boundaries only.
+- Backend business logic lives in `src/server/*`, not inside route files.
 
 ## Chat data flow
 
@@ -82,6 +87,16 @@ Logout/auth-null path:
 2. Auth listener dispatches `resetChat`.
 3. Chat state and active subscriptions are cleaned.
 
+Message send path:
+
+1. `app/page.tsx` dispatches `sendComposerMessage`.
+2. `chatThunks.ts` calls `chatApiService.sendMessageToServer`.
+3. Browser calls `POST /api/chat/send` with Firebase ID token.
+4. `/api/chat/send` delegates to `chatBackendService`.
+5. `chatBackendService` calls `/api/backend/chat` by default.
+6. `/api/backend/chat` delegates to `src/server/chat/chatService.ts`.
+7. Server chat service persists the user message, calls the external agent, persists the system reply, and returns the result.
+
 ## Google Calendar OAuth flow
 
 - Frontend button calls `POST /api/integrations/google-calendar/connect` with Firebase ID token.
@@ -95,7 +110,7 @@ Logout/auth-null path:
 
 ## External agent endpoint
 
-- Mock chat orchestration calls the agent backend through `AGENT_CHAT_URL`.
+- Backend chat orchestration calls the external agent through `AGENT_CHAT_URL`.
 - Local default:
   - `http://localhost:8082/agent/send-chat`
 - Keep this server-only. UI components and pages should continue talking only to this app's own routes.

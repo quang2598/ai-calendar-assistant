@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import {
-  MockServerError,
-  getAuthContextByUid,
-  toMockServerError,
-} from "@/src/mock-server";
+  BackendChatError,
+  getBackendAuthContextByUid,
+  toBackendChatError,
+} from "@/src/server/chat";
 
 export const runtime = "nodejs";
 
@@ -17,7 +17,7 @@ function getUid(value: unknown): string {
 }
 
 function errorResponse(error: unknown): NextResponse {
-  const normalized = toMockServerError(error);
+  const normalized = toBackendChatError(error);
 
   return NextResponse.json(
     {
@@ -34,14 +34,14 @@ async function parseBody(request: NextRequest): Promise<AuthRequestBody> {
   try {
     return (await request.json()) as AuthRequestBody;
   } catch {
-    throw new MockServerError("Invalid JSON body.", "INVALID_JSON", 400);
+    throw new BackendChatError("Invalid JSON body.", "INVALID_JSON", 400);
   }
 }
 
 export async function GET(request: NextRequest) {
   try {
     const uid = request.nextUrl.searchParams.get("uid") ?? "";
-    const auth = getAuthContextByUid(uid);
+    const auth = getBackendAuthContextByUid(uid);
 
     return NextResponse.json({ auth }, { status: 200 });
   } catch (error) {
@@ -52,7 +52,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const body = await parseBody(request);
-    const auth = getAuthContextByUid(getUid(body.uid));
+    const auth = getBackendAuthContextByUid(getUid(body.uid));
 
     return NextResponse.json({ auth }, { status: 200 });
   } catch (error) {
