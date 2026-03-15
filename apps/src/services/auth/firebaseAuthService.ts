@@ -14,6 +14,7 @@ type AuthStateChangeHandler = (user: AuthUser | null) => void;
 type AuthStateErrorHandler = (error: unknown) => void;
 export type GoogleSignInResult = {
   user: AuthUser | null;
+  uid: string | null;
   isNewUser: boolean;
 };
 
@@ -23,11 +24,14 @@ function projectFirebaseUser(user: User | null): AuthUser | null {
   }
 
   return {
-    uid: user.uid,
     email: user.email,
     displayName: user.displayName,
     photoURL: user.photoURL,
   };
+}
+
+export function getCurrentAuthUid(): string | null {
+  return auth.currentUser?.uid ?? null;
 }
 
 export function listenToAuthChanges(
@@ -57,6 +61,7 @@ export async function signInWithGooglePopup(): Promise<GoogleSignInResult> {
 
   return {
     user,
+    uid: credential.user.uid,
     isNewUser: additionalUserInfo?.isNewUser ?? metadataSuggestsNewUser,
   };
 }

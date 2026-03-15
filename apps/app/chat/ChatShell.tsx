@@ -23,6 +23,10 @@ type ChatShellProps = {
   userDisplayName: string | null;
   userEmail: string | null;
   userPhotoURL: string | null;
+  isConnectingCalendar: boolean;
+  onConnectGoogleCalendar: () => void;
+  calendarConnectionError: string | null;
+  calendarConnectionSuccess: string | null;
   isSigningOut: boolean;
   onStartNewConversation: () => void;
   onComposerTextChange: (value: string) => void;
@@ -47,6 +51,10 @@ export default function ChatShell({
   userDisplayName,
   userEmail,
   userPhotoURL,
+  isConnectingCalendar,
+  onConnectGoogleCalendar,
+  calendarConnectionError,
+  calendarConnectionSuccess,
   isSigningOut,
   onStartNewConversation,
   onComposerTextChange,
@@ -65,6 +73,10 @@ export default function ChatShell({
           userDisplayName={userDisplayName}
           userEmail={userEmail}
           userPhotoURL={userPhotoURL}
+          isConnectingCalendar={isConnectingCalendar}
+          onConnectGoogleCalendar={onConnectGoogleCalendar}
+          calendarConnectionError={calendarConnectionError}
+          calendarConnectionSuccess={calendarConnectionSuccess}
           isSigningOut={isSigningOut}
           onStartNewConversation={onStartNewConversation}
           onSelectConversation={onSelectConversation}

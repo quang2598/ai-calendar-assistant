@@ -1,6 +1,7 @@
 import { createAsyncThunk } from "@reduxjs/toolkit";
 import { FirestoreError } from "firebase/firestore";
 
+import { getCurrentAuthUid } from "@/src/services/auth/firebaseAuthService";
 import {
   listenToConversations,
   listenToMessages,
@@ -78,9 +79,16 @@ function teardownMessagesListener() {
 
 export const startConversationsListener = createAsyncThunk<
   void,
-  string,
+  void,
   { rejectValue: string }
->("chat/startConversationsListener", async (uid, { dispatch, rejectWithValue }) => {
+>("chat/startConversationsListener", async (_, { dispatch, rejectWithValue }) => {
+  const uid = getCurrentAuthUid();
+  if (!uid) {
+    const message = "User is not authenticated.";
+    dispatch(conversationsFailed(message));
+    return rejectWithValue(message);
+  }
+
   if (conversationsUnsubscribe && conversationsListeningUid === uid) {
     return;
   }
@@ -116,11 +124,18 @@ export const startConversationsListener = createAsyncThunk<
 
 export const startMessagesListener = createAsyncThunk<
   void,
-  { uid: string; conversationId: string },
+  { conversationId: string },
   { rejectValue: string }
 >(
   "chat/startMessagesListener",
-  async ({ uid, conversationId }, { dispatch, rejectWithValue }) => {
+  async ({ conversationId }, { dispatch, rejectWithValue }) => {
+    const uid = getCurrentAuthUid();
+    if (!uid) {
+      const message = "User is not authenticated.";
+      dispatch(messagesFailed({ conversationId, error: message }));
+      return rejectWithValue(message);
+    }
+
     if (
       messagesUnsubscribe &&
       messagesListeningUid === uid &&
@@ -183,9 +198,9 @@ export const stopMessagesListener = createAsyncThunk(
 
 export const sendComposerMessage = createAsyncThunk<
   void,
-  { uid: string },
+  void,
   { state: RootState; rejectValue: string }
->("chat/sendComposerMessage", async ({ uid }, { dispatch, getState, rejectWithValue }) => {
+>("chat/sendComposerMessage", async (_, { dispatch, getState, rejectWithValue }) => {
   const state = getState();
   if (state.chat.sendingStatus === "loading") {
     return;
@@ -193,9 +208,16 @@ export const sendComposerMessage = createAsyncThunk<
 
   const message = state.chat.composerText.trim();
   const conversationId = state.chat.activeConversationId;
+  const uid = getCurrentAuthUid();
 
   if (!message) {
     const error = "Message cannot be empty.";
+    dispatch(sendingFailed(error));
+    return rejectWithValue(error);
+  }
+
+  if (!uid) {
+    const error = "User is not authenticated.";
     dispatch(sendingFailed(error));
     return rejectWithValue(error);
   }
@@ -204,7 +226,6 @@ export const sendComposerMessage = createAsyncThunk<
 
   try {
     const data = await sendMessageToServer({
-      uid,
       conversationId,
       message,
     });
@@ -216,7 +237,6 @@ export const sendComposerMessage = createAsyncThunk<
 
     await dispatch(
       startMessagesListener({
-        uid,
         conversationId: data.conversationId,
       }),
     );

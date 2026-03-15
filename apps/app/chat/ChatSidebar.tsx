@@ -9,6 +9,10 @@ type ChatSidebarProps = {
   userDisplayName: string | null;
   userEmail: string | null;
   userPhotoURL: string | null;
+  isConnectingCalendar: boolean;
+  onConnectGoogleCalendar: () => void;
+  calendarConnectionError: string | null;
+  calendarConnectionSuccess: string | null;
   isSigningOut: boolean;
   onStartNewConversation: () => void;
   onSelectConversation: (conversationId: string) => void;
@@ -23,6 +27,10 @@ export default function ChatSidebar({
   userDisplayName,
   userEmail,
   userPhotoURL,
+  isConnectingCalendar,
+  onConnectGoogleCalendar,
+  calendarConnectionError,
+  calendarConnectionSuccess,
   isSigningOut,
   onStartNewConversation,
   onSelectConversation,
@@ -96,6 +104,20 @@ export default function ChatSidebar({
             ) : null}
           </div>
         </div>
+        <button
+          type="button"
+          onClick={onConnectGoogleCalendar}
+          disabled={isConnectingCalendar}
+          className="mt-3 w-full rounded-lg border border-cyan-400/40 bg-cyan-400/10 px-3 py-2 text-sm text-cyan-200 transition hover:border-cyan-300/60 hover:bg-cyan-400/20 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {isConnectingCalendar ? "Connecting..." : "Connect Google Calendar"}
+        </button>
+        {calendarConnectionSuccess ? (
+          <p className="mt-2 text-xs text-emerald-300">{calendarConnectionSuccess}</p>
+        ) : null}
+        {calendarConnectionError ? (
+          <p className="mt-2 text-xs text-red-300">{calendarConnectionError}</p>
+        ) : null}
         <button
           type="button"
           onClick={onSignOut}
