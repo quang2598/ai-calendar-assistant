@@ -24,6 +24,11 @@ def test_resolve_timezone_rejects_invalid_timezone() -> None:
         google_calendar_utility._resolve_timezone("Not/AZone")
 
 
+def test_validate_timezone_name_rejects_empty() -> None:
+    with pytest.raises(RuntimeError, match="empty"):
+        google_calendar_utility._validate_timezone_name("   ")
+
+
 def test_ensure_datetime_timezone_applies_default_timezone() -> None:
     value = datetime(2026, 3, 13, 9, 0)
 
@@ -195,24 +200,162 @@ def test_parse_event_time_and_resolve_calendar_id() -> None:
     assert google_calendar_utility._resolve_calendar_id(" custom-id ") == "custom-id"
 
 
+def test_extract_timezone_returns_valid_value() -> None:
+    assert google_calendar_utility._extract_timezone({"value": "America/Chicago"}, "value") == "America/Chicago"
+
+
+def test_extract_timezone_ignores_invalid_value() -> None:
+    assert google_calendar_utility._extract_timezone({"value": "Not/AZone"}, "value") is None
+
+
+def test_extract_invitees_returns_email_list() -> None:
+    assert google_calendar_utility._extract_invitees(
+        {
+            "attendees": [
+                {"email": "Alex@example.com"},
+                {"email": "sam@example.com"},
+            ]
+        }
+    ) == ["alex@example.com", "sam@example.com"]
+
+
+def test_normalize_invitees_deduplicates_and_validates() -> None:
+    assert google_calendar_utility._normalize_invitees(
+        ["Alex@example.com", "alex@example.com", "sam@example.com"]
+    ) == ["alex@example.com", "sam@example.com"]
+
+    with pytest.raises(ValueError, match="Invalid invitee email"):
+        google_calendar_utility._normalize_invitees(["not-an-email"])
+
+    with pytest.raises(ValueError, match="must not be empty"):
+        google_calendar_utility._normalize_invitees(["   "])
+
+
 def test_resolve_window_defaults_and_partial_inputs() -> None:
-    start, end = google_calendar_utility._resolve_window(None, None)
+    timezone_calls = []
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(
+        google_calendar_utility,
+        "_resolve_effective_timezone_name",
+        lambda uid, timezone_name, calendar_id=None: timezone_calls.append((uid, timezone_name, calendar_id)) or "America/Chicago",
+    )
+    try:
+        start, end = google_calendar_utility._resolve_window("user-1", None, None)
+    finally:
+        monkeypatch.undo()
     assert start < end
+    assert timezone_calls == [("user-1", None, None)]
 
-    explicit_start, explicit_end = google_calendar_utility._resolve_window(
-        datetime(2026, 3, 13, 9, 0, tzinfo=timezone.utc),
-        None,
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(
+        google_calendar_utility,
+        "_resolve_effective_timezone_name",
+        lambda uid, timezone_name, calendar_id=None: "America/Chicago",
     )
+    try:
+        explicit_start, explicit_end = google_calendar_utility._resolve_window(
+            "user-1",
+            datetime(2026, 3, 13, 9, 0, tzinfo=timezone.utc),
+            None,
+        )
+    finally:
+        monkeypatch.undo()
     assert explicit_start < explicit_end
 
-    explicit_start, explicit_end = google_calendar_utility._resolve_window(
-        None,
-        datetime(2026, 3, 13, 9, 0, tzinfo=timezone.utc),
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(
+        google_calendar_utility,
+        "_resolve_effective_timezone_name",
+        lambda uid, timezone_name, calendar_id=None: "America/Chicago",
     )
+    try:
+        explicit_start, explicit_end = google_calendar_utility._resolve_window(
+            "user-1",
+            None,
+            datetime(2026, 3, 13, 9, 0, tzinfo=timezone.utc),
+        )
+    finally:
+        monkeypatch.undo()
     assert explicit_start < explicit_end
+
+
+def test_get_user_calendar_timezone_uses_settings_first(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = []
+
+    def fake_execute_with_auth_retry(uid, operation):
+        calls.append(uid)
+        return {"value": "America/Chicago"}
+
+    monkeypatch.setattr(google_calendar_utility, "_execute_with_auth_retry", fake_execute_with_auth_retry)
+
+    result = google_calendar_utility.get_user_calendar_timezone("user-1")
+
+    assert result == "America/Chicago"
+    assert calls == ["user-1"]
+
+
+def test_get_user_calendar_timezone_falls_back_to_calendar_metadata(monkeypatch: pytest.MonkeyPatch) -> None:
+    responses = iter([{"value": "Not/AZone"}, {"timeZone": "Europe/London"}])
+    monkeypatch.setattr(
+        google_calendar_utility,
+        "_execute_with_auth_retry",
+        lambda uid, operation: next(responses),
+    )
+
+    result = google_calendar_utility.get_user_calendar_timezone("user-1")
+
+    assert result == "Europe/London"
+
+
+def test_get_user_calendar_timezone_uses_configured_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        google_calendar_utility,
+        "_execute_with_auth_retry",
+        lambda uid, operation: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+
+    result = google_calendar_utility.get_user_calendar_timezone("user-1")
+
+    assert result == google_calendar_utility._fallback_timezone_name()
+
+
+def test_resolve_effective_timezone_name_prefers_explicit_value(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = {"lookup": 0}
+    monkeypatch.setattr(
+        google_calendar_utility,
+        "get_user_calendar_timezone",
+        lambda uid, calendar_id=None: calls.__setitem__("lookup", calls["lookup"] + 1) or "America/Chicago",
+    )
+
+    result = google_calendar_utility._resolve_effective_timezone_name(
+        uid="user-1",
+        timezone_name="Europe/London",
+    )
+    assert result == "Europe/London"
+    assert calls["lookup"] == 0
+
+
+def test_resolve_effective_timezone_name_uses_lookup(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        google_calendar_utility,
+        "get_user_calendar_timezone",
+        lambda uid, calendar_id=None: "America/Chicago",
+    )
+
+    result = google_calendar_utility._resolve_effective_timezone_name(
+        uid="user-1",
+        timezone_name=None,
+    )
+
+    assert result == "America/Chicago"
 
 
 def test_list_user_calendar_events_maps_results(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        google_calendar_utility,
+        "_resolve_effective_timezone_name",
+        lambda uid, timezone_name, calendar_id=None: "America/Chicago",
+    )
     monkeypatch.setattr(
         google_calendar_utility,
         "_execute_with_auth_retry",
@@ -224,6 +367,7 @@ def test_list_user_calendar_events_maps_results(monkeypatch: pytest.MonkeyPatch)
                     "start": {"dateTime": "2026-03-13T09:00:00-05:00"},
                     "end": {"dateTime": "2026-03-13T10:00:00-05:00"},
                     "status": "confirmed",
+                    "attendees": [{"email": "alex@example.com"}],
                 }
             ]
         },
@@ -244,6 +388,7 @@ def test_list_user_calendar_events_maps_results(monkeypatch: pytest.MonkeyPatch)
             status="confirmed",
             description=None,
             location=None,
+            invitees=["alex@example.com"],
             html_link=None,
         )
     ]
@@ -255,12 +400,21 @@ def test_list_user_calendar_events_rejects_max_results() -> None:
 
 
 def test_list_user_calendar_events_rejects_large_window() -> None:
-    with pytest.raises(ValueError):
-        google_calendar_utility.list_user_calendar_events(
-            uid="user-1",
-            start_time=datetime(2020, 1, 1, tzinfo=timezone.utc),
-            end_time=datetime(2026, 1, 1, tzinfo=timezone.utc),
-        )
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(
+        google_calendar_utility,
+        "_resolve_effective_timezone_name",
+        lambda uid, timezone_name, calendar_id=None: "America/Chicago",
+    )
+    try:
+        with pytest.raises(ValueError):
+            google_calendar_utility.list_user_calendar_events(
+                uid="user-1",
+                start_time=datetime(2020, 1, 1, tzinfo=timezone.utc),
+                end_time=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            )
+    finally:
+        monkeypatch.undo()
 
 
 def test_list_user_calendar_events_maps_provider_error(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -268,6 +422,11 @@ def test_list_user_calendar_events_maps_provider_error(monkeypatch: pytest.Monke
         pass
 
     monkeypatch.setattr(google_calendar_utility, "HttpError", FakeHttpError)
+    monkeypatch.setattr(
+        google_calendar_utility,
+        "_resolve_effective_timezone_name",
+        lambda uid, timezone_name, calendar_id=None: "America/Chicago",
+    )
     monkeypatch.setattr(
         google_calendar_utility,
         "_execute_with_auth_retry",
@@ -283,15 +442,24 @@ def test_list_user_calendar_events_maps_provider_error(monkeypatch: pytest.Monke
 
 
 def test_create_user_calendar_event_validates_time_order() -> None:
-    with pytest.raises(ValueError):
-        google_calendar_utility.create_user_calendar_event(
-            uid="user-1",
-            request=CreateCalendarEventRequest(
-                title="Bad Event",
-                start_time=datetime(2026, 3, 13, 10, 0, tzinfo=timezone.utc),
-                end_time=datetime(2026, 3, 13, 9, 0, tzinfo=timezone.utc),
-            ),
-        )
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(
+        google_calendar_utility,
+        "_resolve_effective_timezone_name",
+        lambda uid, timezone_name, calendar_id=None: "America/Chicago",
+    )
+    try:
+        with pytest.raises(ValueError):
+            google_calendar_utility.create_user_calendar_event(
+                uid="user-1",
+                request=CreateCalendarEventRequest(
+                    title="Bad Event",
+                    start_time=datetime(2026, 3, 13, 10, 0, tzinfo=timezone.utc),
+                    end_time=datetime(2026, 3, 13, 9, 0, tzinfo=timezone.utc),
+                ),
+            )
+    finally:
+        monkeypatch.undo()
 
 
 def test_create_user_calendar_event_rejects_empty_title() -> None:
@@ -307,16 +475,38 @@ def test_create_user_calendar_event_rejects_empty_title() -> None:
 
 
 def test_create_user_calendar_event_maps_created_event(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured = {}
+
+    class FakeInsertRequest:
+        def __init__(self, body: dict) -> None:
+            self.body = body
+
+        def execute(self) -> dict:
+            return self.body | {
+                "id": "evt-2",
+                "status": "confirmed",
+                "htmlLink": "https://calendar.google.com/event?eid=evt-2",
+            }
+
+    class FakeEvents:
+        def insert(self, calendarId: str, body: dict) -> FakeInsertRequest:
+            captured["calendar_id"] = calendarId
+            captured["payload"] = body
+            return FakeInsertRequest(body)
+
+    class FakeService:
+        def events(self) -> FakeEvents:
+            return FakeEvents()
+
+    monkeypatch.setattr(
+        google_calendar_utility,
+        "_resolve_effective_timezone_name",
+        lambda uid, timezone_name, calendar_id=None: "America/Chicago",
+    )
     monkeypatch.setattr(
         google_calendar_utility,
         "_execute_with_auth_retry",
-        lambda uid, operation: {
-            "id": "evt-2",
-            "summary": "Lunch",
-            "start": {"dateTime": "2026-03-13T12:00:00+00:00"},
-            "end": {"dateTime": "2026-03-13T13:00:00+00:00"},
-            "status": "confirmed",
-        },
+        lambda uid, operation: operation(FakeService()),
     )
 
     result = google_calendar_utility.create_user_calendar_event(
@@ -327,8 +517,15 @@ def test_create_user_calendar_event_maps_created_event(monkeypatch: pytest.Monke
             end_time=datetime(2026, 3, 13, 13, 0, tzinfo=timezone.utc),
             description="With team",
             location="Cafe",
+            invitees=["alex@example.com", "sam@example.com"],
         ),
     )
 
     assert result.event_id == "evt-2"
     assert result.title == "Lunch"
+    assert result.invitees == ["alex@example.com", "sam@example.com"]
+    assert captured["calendar_id"] == "primary"
+    assert captured["payload"]["attendees"] == [
+        {"email": "alex@example.com"},
+        {"email": "sam@example.com"},
+    ]

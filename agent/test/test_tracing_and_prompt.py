@@ -11,10 +11,14 @@ from config.tracing_config import trace_span
 
 
 def test_build_system_prompt_includes_runtime_context() -> None:
-    prompt = build_system_prompt(datetime(2026, 3, 12, 18, 0, tzinfo=timezone.utc))
+    prompt = build_system_prompt(
+        datetime(2026, 3, 12, 18, 0, tzinfo=timezone.utc),
+        user_timezone="America/Chicago",
+    )
 
     assert "2026-03-12T18:00:00+00:00" in prompt
-    assert "Assistant default timezone" in prompt
+    assert "America/Chicago" in prompt
+    assert "Fallback timezone if calendar timezone is unavailable" in prompt
 
 
 def test_trace_span_wraps_sync_function() -> None:

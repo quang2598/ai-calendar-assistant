@@ -36,6 +36,7 @@ class CalendarEvent:
     status: str
     description: Optional[str] = None
     location: Optional[str] = None
+    invitees: Optional[List[str]] = None
     html_link: Optional[str] = None
 
 
@@ -47,6 +48,7 @@ class CreateCalendarEventRequest:
     timezone_name: Optional[str] = None
     description: Optional[str] = None
     location: Optional[str] = None
+    invitees: Optional[List[str]] = None
     calendar_id: Optional[str] = None
 
 
@@ -54,15 +56,30 @@ def _utc_now() -> datetime:
     return datetime.now(tz=timezone.utc)
 
 
-def _resolve_timezone(timezone_name: Optional[str]) -> ZoneInfo:
-    target_timezone = timezone_name or _get_agent_settings().calendar_default_timezone
+def _fallback_timezone_name() -> str:
+    return _get_agent_settings().calendar_default_timezone.strip()
+
+
+def _validate_timezone_name(timezone_name: str) -> str:
+    cleaned = timezone_name.strip()
+    if not cleaned:
+        raise RuntimeError("Invalid timezone: empty value")
+    try:
+        ZoneInfo(cleaned)
+    except Exception as exc:
+        raise RuntimeError(f"Invalid timezone: {cleaned}") from exc
+    return cleaned
+
+
+def _resolve_timezone(timezone_name: str) -> ZoneInfo:
+    target_timezone = _validate_timezone_name(timezone_name)
     try:
         return ZoneInfo(target_timezone)
     except Exception as exc:
         raise RuntimeError(f"Invalid timezone: {target_timezone}") from exc
 
 
-def _ensure_datetime_timezone(value: datetime, timezone_name: Optional[str]) -> datetime:
+def _ensure_datetime_timezone(value: datetime, timezone_name: str) -> datetime:
     target_timezone = _resolve_timezone(timezone_name)
     if value.tzinfo is None:
         return value.replace(tzinfo=target_timezone)
@@ -135,6 +152,42 @@ def _parse_event_time(raw_event: dict, key: str) -> str:
     return str(payload.get("dateTime") or payload.get("date") or "")
 
 
+def _extract_invitees(raw_event: dict) -> Optional[List[str]]:
+    attendees = raw_event.get("attendees")
+    if not isinstance(attendees, list):
+        return None
+
+    invitees: List[str] = []
+    for attendee in attendees:
+        if not isinstance(attendee, dict):
+            continue
+        email = str(attendee.get("email", "")).strip().lower()
+        if email:
+            invitees.append(email)
+
+    return invitees or None
+
+
+def _normalize_invitees(invitees: Optional[List[str]]) -> List[str]:
+    if not invitees:
+        return []
+
+    normalized: List[str] = []
+    seen = set()
+    for invitee in invitees:
+        cleaned = str(invitee or "").strip().lower()
+        if not cleaned:
+            raise ValueError("Invitee emails must not be empty.")
+        if "@" not in cleaned or cleaned.startswith("@") or cleaned.endswith("@") or " " in cleaned:
+            raise ValueError(f"Invalid invitee email: {invitee}")
+        if cleaned in seen:
+            continue
+        seen.add(cleaned)
+        normalized.append(cleaned)
+
+    return normalized
+
+
 def _map_calendar_event(raw_event: dict) -> CalendarEvent:
     return CalendarEvent(
         event_id=str(raw_event.get("id", "")),
@@ -144,6 +197,7 @@ def _map_calendar_event(raw_event: dict) -> CalendarEvent:
         status=str(raw_event.get("status", "")),
         description=raw_event.get("description"),
         location=raw_event.get("location"),
+        invitees=_extract_invitees(raw_event),
         html_link=raw_event.get("htmlLink"),
     )
 
@@ -152,24 +206,100 @@ def _resolve_calendar_id(calendar_id: Optional[str]) -> str:
     return (calendar_id or _get_agent_settings().google_calendar_default_id).strip()
 
 
+def _extract_timezone(payload: object, field_name: str) -> Optional[str]:
+    raw_value = None
+    if isinstance(payload, dict):
+        raw_value = payload.get(field_name)
+
+    cleaned = str(raw_value or "").strip()
+    if not cleaned:
+        return None
+
+    try:
+        return _validate_timezone_name(cleaned)
+    except RuntimeError:
+        logger.warning(
+            "Ignoring invalid timezone returned by Google Calendar: field={}, value={}",
+            field_name,
+            cleaned,
+        )
+        return None
+
+
+@trace_span("get_user_calendar_timezone")
+def get_user_calendar_timezone(uid: str, calendar_id: Optional[str] = None) -> str:
+    fallback_timezone = _fallback_timezone_name()
+    resolved_calendar_id = _resolve_calendar_id(calendar_id)
+
+    def settings_operation(service: Resource) -> object:
+        return service.settings().get(setting="timezone").execute()
+
+    try:
+        response = _execute_with_auth_retry(uid=uid, operation=settings_operation)
+    except Exception as exc:
+        logger.warning(
+            "Unable to resolve Google Calendar settings timezone for uid={}; using fallback. Error: {}",
+            uid,
+            exc,
+        )
+    else:
+        timezone_name = _extract_timezone(response, "value")
+        if timezone_name is not None:
+            return timezone_name
+
+    def calendar_operation(service: Resource) -> object:
+        return service.calendars().get(calendarId=resolved_calendar_id).execute()
+
+    try:
+        response = _execute_with_auth_retry(uid=uid, operation=calendar_operation)
+    except Exception as exc:
+        logger.warning(
+            "Unable to resolve Google Calendar timezone from calendar metadata for uid={}; using fallback. Error: {}",
+            uid,
+            exc,
+        )
+        return fallback_timezone
+
+    timezone_name = _extract_timezone(response, "timeZone")
+    return timezone_name or fallback_timezone
+
+
+def _resolve_effective_timezone_name(
+    uid: str,
+    timezone_name: Optional[str],
+    calendar_id: Optional[str] = None,
+) -> str:
+    if timezone_name is not None and timezone_name.strip():
+        return _validate_timezone_name(timezone_name)
+    return get_user_calendar_timezone(uid=uid, calendar_id=calendar_id)
+
+
 def _resolve_window(
+    uid: str,
     start_time: Optional[datetime],
     end_time: Optional[datetime],
     timezone_name: Optional[str] = None,
+    calendar_id: Optional[str] = None,
 ) -> Tuple[datetime, datetime]:
     settings = _get_agent_settings()
+    effective_timezone_name = _resolve_effective_timezone_name(
+        uid=uid,
+        timezone_name=timezone_name,
+        calendar_id=calendar_id,
+    )
+    current_time = datetime.now(tz=_resolve_timezone(effective_timezone_name))
     if start_time is None and end_time is None:
-        start_time = _utc_now()
+        start_time = current_time
         end_time = start_time + timedelta(days=settings.calendar_default_window_days)
     elif start_time is None and end_time is not None:
-        end_time = _ensure_datetime_timezone(end_time, timezone_name)
+        end_time = _ensure_datetime_timezone(end_time, effective_timezone_name)
         start_time = end_time - timedelta(days=settings.calendar_default_window_days)
     elif start_time is not None and end_time is None:
-        start_time = _ensure_datetime_timezone(start_time, timezone_name)
+        start_time = _ensure_datetime_timezone(start_time, effective_timezone_name)
         end_time = start_time + timedelta(days=settings.calendar_default_window_days)
     else:
-        start_time = _ensure_datetime_timezone(start_time, timezone_name)
-        end_time = _ensure_datetime_timezone(end_time, timezone_name)
+        start_time = _ensure_datetime_timezone(start_time, effective_timezone_name)
+        end_time = _ensure_datetime_timezone(end_time, effective_timezone_name)
 
     if start_time >= end_time:
         raise ValueError("Calendar window is invalid: start_time must be before end_time.")
@@ -243,11 +373,18 @@ def list_user_calendar_events(
         raise ValueError("max_results must be between 1 and 250.")
 
     window_start, window_end = _resolve_window(
+        uid=uid,
         start_time=start_time,
         end_time=end_time,
         timezone_name=timezone_name,
+        calendar_id=calendar_id,
     )
     resolved_calendar_id = _resolve_calendar_id(calendar_id)
+    effective_timezone_name = _resolve_effective_timezone_name(
+        uid=uid,
+        timezone_name=timezone_name,
+        calendar_id=calendar_id,
+    )
 
     def operation(service: Resource) -> object:
         return (
@@ -259,6 +396,7 @@ def list_user_calendar_events(
                 maxResults=max_results,
                 singleEvents=True,
                 orderBy="startTime",
+                timeZone=effective_timezone_name,
             )
             .execute()
         )
@@ -274,18 +412,23 @@ def list_user_calendar_events(
 
 @trace_span("create_user_calendar_event")
 def create_user_calendar_event(uid: str, request: CreateCalendarEventRequest) -> CalendarEvent:
-    settings = _get_agent_settings()
     title = request.title.strip()
     if not title:
         raise ValueError("Event title must not be empty.")
 
-    event_start = _ensure_datetime_timezone(request.start_time, request.timezone_name)
-    event_end = _ensure_datetime_timezone(request.end_time, request.timezone_name)
+    effective_timezone_name = _resolve_effective_timezone_name(
+        uid=uid,
+        timezone_name=request.timezone_name,
+        calendar_id=request.calendar_id,
+    )
+    event_start = _ensure_datetime_timezone(request.start_time, effective_timezone_name)
+    event_end = _ensure_datetime_timezone(request.end_time, effective_timezone_name)
     if event_start >= event_end:
         raise ValueError("Event end_time must be after start_time.")
 
     resolved_calendar_id = _resolve_calendar_id(request.calendar_id)
-    resolved_timezone = str(event_start.tzinfo) if event_start.tzinfo else settings.calendar_default_timezone
+    resolved_timezone = effective_timezone_name
+    normalized_invitees = _normalize_invitees(request.invitees)
 
     event_payload = {
         "summary": title,
@@ -303,6 +446,8 @@ def create_user_calendar_event(uid: str, request: CreateCalendarEventRequest) ->
         event_payload["description"] = request.description.strip()
     if request.location:
         event_payload["location"] = request.location.strip()
+    if normalized_invitees:
+        event_payload["attendees"] = [{"email": invitee} for invitee in normalized_invitees]
 
     def operation(service: Resource) -> object:
         return (

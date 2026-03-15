@@ -11,6 +11,7 @@ from config import trace_span
 from utility.google_calendar_utility import (
     CreateCalendarEventRequest,
     create_user_calendar_event,
+    get_user_calendar_timezone,
     list_user_calendar_events,
 )
 
@@ -81,6 +82,13 @@ class AddEventToCalendarInput(BaseModel):
         default=None,
         description="Optional event location.",
     )
+    invitees: Optional[List[str]] = Field(
+        default=None,
+        description=(
+            "Optional list of invitee email addresses, for example: "
+            '["alex@example.com", "sam@example.com"]'
+        ),
+    )
     calendar_id: Optional[str] = Field(
         default=None,
         description="Optional calendar id. Defaults to configured calendar.",
@@ -114,6 +122,21 @@ def _parse_datetime(value: Optional[str]) -> Optional[datetime]:
         ) from exc
 
 
+def _normalize_event_creation_datetime(
+    value: datetime,
+    timezone_name: Optional[str],
+) -> datetime:
+    if timezone_name is None or not timezone_name.strip():
+        return value
+    if value.tzinfo is None:
+        return value
+
+    # For scheduling, the tool-level timezone is authoritative for interpreting
+    # the user's intended wall-clock time. This avoids accidental UTC conversion
+    # by the model turning "10:00 AM" into a shifted local event time.
+    return value.replace(tzinfo=None)
+
+
 @trace_span("tool_get_user_calendar")
 def _get_user_calendar_impl(
     uid: str,
@@ -133,11 +156,21 @@ def _get_user_calendar_impl(
         )
 
     try:
+        timezone_used = (
+            timezone.strip() if timezone and timezone.strip() else get_user_calendar_timezone(uid=uid, calendar_id=calendar_id)
+        )
+    except Exception as exc:
+        return _json_tool_response(
+            status="error",
+            message=f"Failed to resolve calendar timezone: {exc}",
+        )
+
+    try:
         events = list_user_calendar_events(
             uid=uid,
             start_time=start_dt,
             end_time=end_dt,
-            timezone_name=timezone,
+            timezone_name=timezone_used,
             calendar_id=calendar_id,
             max_results=max_results,
         )
@@ -156,6 +189,7 @@ def _get_user_calendar_impl(
             "status": event.status,
             "location": event.location,
             "description": event.description,
+            "invitees": event.invitees,
             "htmlLink": event.html_link,
         }
         for event in events
@@ -166,6 +200,7 @@ def _get_user_calendar_impl(
             message="No calendar events found in the requested time range.",
             events=[],
             event_count=0,
+            timezone_used=timezone_used,
         )
 
     return _json_tool_response(
@@ -173,6 +208,7 @@ def _get_user_calendar_impl(
         message=f"Found {len(items)} calendar events.",
         events=items,
         event_count=len(items),
+        timezone_used=timezone_used,
     )
 
 
@@ -185,6 +221,7 @@ def _add_event_to_calendar_impl(
     timezone: Optional[str],
     description: Optional[str],
     location: Optional[str],
+    invitees: Optional[List[str]],
     calendar_id: Optional[str],
 ) -> str:
     missing_fields: List[str] = []
@@ -219,15 +256,28 @@ def _add_event_to_calendar_impl(
         )
 
     try:
+        timezone_used = (
+            timezone.strip() if timezone and timezone.strip() else get_user_calendar_timezone(uid=uid, calendar_id=calendar_id)
+        )
+    except Exception as exc:
+        return _json_tool_response(
+            status="error",
+            message=f"Failed to resolve calendar timezone: {exc}",
+        )
+
+    try:
+        normalized_start_dt = _normalize_event_creation_datetime(start_dt, timezone_used)
+        normalized_end_dt = _normalize_event_creation_datetime(end_dt, timezone_used)
         created_event = create_user_calendar_event(
             uid=uid,
             request=CreateCalendarEventRequest(
                 title=cleaned_title,
-                start_time=start_dt,
-                end_time=end_dt,
-                timezone_name=timezone,
+                start_time=normalized_start_dt,
+                end_time=normalized_end_dt,
+                timezone_name=timezone_used,
                 description=description,
                 location=location,
+                invitees=invitees,
                 calendar_id=calendar_id,
             ),
         )
@@ -240,6 +290,7 @@ def _add_event_to_calendar_impl(
     return _json_tool_response(
         status="success",
         message="Calendar event created successfully.",
+        timezone_used=timezone_used,
         event={
             "id": created_event.event_id,
             "title": created_event.title,
@@ -248,6 +299,7 @@ def _add_event_to_calendar_impl(
             "status": created_event.status,
             "location": created_event.location,
             "description": created_event.description,
+            "invitees": created_event.invitees,
             "htmlLink": created_event.html_link,
         },
     )
@@ -281,6 +333,7 @@ def build_calendar_tools(uid: str) -> List[BaseTool]:
         timezone: Optional[str] = None,
         description: Optional[str] = None,
         location: Optional[str] = None,
+        invitees: Optional[List[str]] = None,
         calendar_id: Optional[str] = None,
     ) -> str:
         return _add_event_to_calendar_impl(
@@ -291,6 +344,7 @@ def build_calendar_tools(uid: str) -> List[BaseTool]:
             timezone=timezone,
             description=description,
             location=location,
+            invitees=invitees,
             calendar_id=calendar_id,
         )
 
@@ -311,6 +365,7 @@ def build_calendar_tools(uid: str) -> List[BaseTool]:
         description=(
             "Create a Google Calendar event for the user. "
             "Requires title, start_time, and end_time. "
+            "Optional fields include description, location, invitees, and timezone. "
             "If required fields are missing, the tool returns missing_fields."
         ),
         args_schema=AddEventToCalendarInput,

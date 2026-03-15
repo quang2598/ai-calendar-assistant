@@ -12,6 +12,7 @@ from .google_calendar_utility import (
     GOOGLE_CALENDAR_SCOPE,
     build_user_google_credentials,
     create_user_calendar_event,
+    get_user_calendar_timezone,
     get_valid_user_google_access_token,
     list_user_calendar_events,
     refresh_user_google_access_token,
@@ -34,6 +35,7 @@ __all__ = [
     "build_user_google_credentials",
     "list_user_calendar_events",
     "create_user_calendar_event",
+    "get_user_calendar_timezone",
     "get_valid_user_google_access_token",
     "refresh_user_google_access_token",
 ]

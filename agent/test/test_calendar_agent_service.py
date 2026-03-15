@@ -44,6 +44,11 @@ def test_run_calendar_agent_turn_orchestrates(monkeypatch: pytest.MonkeyPatch) -
 
     monkeypatch.setattr(
         calendar_agent_service,
+        "get_user_calendar_timezone",
+        lambda uid: "America/Chicago",
+    )
+    monkeypatch.setattr(
+        calendar_agent_service,
         "load_agent_history_messages",
         lambda uid, conversation_id, latest_user_message: history,
     )
@@ -55,7 +60,7 @@ def test_run_calendar_agent_turn_orchestrates(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setattr(
         calendar_agent_service,
         "invoke_calendar_agent",
-        lambda uid, user_message, chat_history: "You have one meeting.",
+        lambda uid, user_timezone, user_message, chat_history: "You have one meeting.",
     )
 
     response = calendar_agent_service.run_calendar_agent_turn(payload)
@@ -67,7 +72,11 @@ def test_build_calendar_agent_executor_builds_executor(monkeypatch: pytest.Monke
     captured = {}
 
     monkeypatch.setattr(calendar_agent_service, "build_calendar_tools", lambda uid: ["tool-a"])
-    monkeypatch.setattr(calendar_agent_service, "build_system_prompt", lambda: "system prompt")
+    monkeypatch.setattr(
+        calendar_agent_service,
+        "build_system_prompt",
+        lambda user_timezone=None: f"system prompt::{user_timezone}",
+    )
     monkeypatch.setattr(calendar_agent_service, "_build_llm", lambda: "fake-llm")
 
     def fake_create_tool_calling_agent(llm, tools, prompt):
@@ -81,7 +90,7 @@ def test_build_calendar_agent_executor_builds_executor(monkeypatch: pytest.Monke
     monkeypatch.setattr(calendar_agent_service, "create_tool_calling_agent", fake_create_tool_calling_agent)
     monkeypatch.setattr(calendar_agent_service, "AgentExecutor", FakeExecutor)
 
-    executor = calendar_agent_service.build_calendar_agent_executor("user-1")
+    executor = calendar_agent_service.build_calendar_agent_executor("user-1", "America/Chicago")
 
     assert isinstance(executor, FakeExecutor)
     assert captured["agent"]["llm"] == "fake-llm"
@@ -89,12 +98,125 @@ def test_build_calendar_agent_executor_builds_executor(monkeypatch: pytest.Monke
     assert captured["executor_kwargs"]["agent"] == "agent-instance"
 
 
+def test_build_conversation_prompt_uses_general_conversation_system_prompt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        calendar_agent_service,
+        "build_general_conversation_system_prompt",
+        lambda user_timezone=None: f"general prompt::{user_timezone}",
+    )
+
+    prompt = calendar_agent_service._build_conversation_prompt("America/Chicago")
+    rendered = prompt.format(chat_history=[], input="hello there")
+
+    assert "general prompt::America/Chicago" in rendered
+
+
 def test_invoke_calendar_agent_rejects_empty_output(monkeypatch: pytest.MonkeyPatch) -> None:
     class FakeExecutor:
         def invoke(self, payload):
             return {"output": "   "}
 
-    monkeypatch.setattr(calendar_agent_service, "build_calendar_agent_executor", lambda uid: FakeExecutor())
+    monkeypatch.setattr(
+        calendar_agent_service,
+        "build_calendar_agent_executor",
+        lambda uid, user_timezone: FakeExecutor(),
+    )
 
     with pytest.raises(RuntimeError, match="empty response"):
-        calendar_agent_service.invoke_calendar_agent("user-1", "hello", [])
+        calendar_agent_service.invoke_calendar_agent("user-1", "America/Chicago", "hello", [])
+
+
+def test_general_conversation_turn_detection() -> None:
+    assert calendar_agent_service._is_general_conversation_turn("hello there")
+    assert calendar_agent_service._is_general_conversation_turn("how are you?")
+    assert calendar_agent_service._is_general_conversation_turn("I am really great, how about you?")
+    assert not calendar_agent_service._is_general_conversation_turn("what is on my calendar tomorrow?")
+
+
+def test_internal_protocol_leak_detection() -> None:
+    assert calendar_agent_service._looks_like_internal_protocol_leak(
+        'I do not need to call any functions. {"name": "<nil>", "parameters": {}}'
+    )
+    assert calendar_agent_service._looks_like_internal_protocol_leak(
+        "No calendar functions are needed for this question."
+    )
+    assert not calendar_agent_service._looks_like_internal_protocol_leak("Hello there, how can I help?")
+
+
+def test_run_calendar_agent_turn_uses_conversation_path_for_general_chat(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = SendChatRequest(
+        uid="user-1",
+        conversationId="convo-1",
+        message="hello there",
+    )
+    history = [ConversationMessage(role="system", text="hi")]
+
+    monkeypatch.setattr(calendar_agent_service, "get_user_calendar_timezone", lambda uid: "America/Chicago")
+    monkeypatch.setattr(
+        calendar_agent_service,
+        "load_agent_history_messages",
+        lambda uid, conversation_id, latest_user_message: history,
+    )
+    monkeypatch.setattr(
+        calendar_agent_service,
+        "build_langchain_history_messages",
+        lambda history: [AIMessage(content="hi")],
+    )
+    calls = {"conversation": 0, "calendar": 0}
+    monkeypatch.setattr(
+        calendar_agent_service,
+        "invoke_conversation_reply",
+        lambda user_timezone, user_message, chat_history: calls.__setitem__("conversation", calls["conversation"] + 1)
+        or "Hello!",
+    )
+    monkeypatch.setattr(
+        calendar_agent_service,
+        "invoke_calendar_agent",
+        lambda uid, user_timezone, user_message, chat_history: calls.__setitem__("calendar", calls["calendar"] + 1)
+        or "calendar",
+    )
+
+    response = calendar_agent_service.run_calendar_agent_turn(payload)
+
+    assert response.responseMessage.text == "Hello!"
+    assert calls == {"conversation": 1, "calendar": 0}
+
+
+def test_run_calendar_agent_turn_falls_back_when_protocol_leaks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = SendChatRequest(
+        uid="user-1",
+        conversationId="convo-1",
+        message="hi there one more time",
+    )
+
+    monkeypatch.setattr(calendar_agent_service, "get_user_calendar_timezone", lambda uid: "America/Chicago")
+    monkeypatch.setattr(
+        calendar_agent_service,
+        "load_agent_history_messages",
+        lambda uid, conversation_id, latest_user_message: [],
+    )
+    monkeypatch.setattr(
+        calendar_agent_service,
+        "build_langchain_history_messages",
+        lambda history: [],
+    )
+    monkeypatch.setattr(
+        calendar_agent_service,
+        "invoke_calendar_agent",
+        lambda uid, user_timezone, user_message, chat_history: 'To follow the format, {"name": "<nil>", "parameters": {}}',
+    )
+    monkeypatch.setattr(
+        calendar_agent_service,
+        "invoke_conversation_reply",
+        lambda user_timezone, user_message, chat_history: "Hi again.",
+    )
+
+    response = calendar_agent_service.run_calendar_agent_turn(payload)
+
+    assert response.responseMessage.text == "Hi again."
