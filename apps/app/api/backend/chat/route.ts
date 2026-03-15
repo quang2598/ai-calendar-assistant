@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
+import { verifyFirebaseIdToken } from "@/src/lib/firebaseAdmin";
 import {
   BackendChatError,
   processBackendChatRequest,
@@ -10,7 +11,6 @@ import {
 export const runtime = "nodejs";
 
 type ChatRequestBody = {
-  uid?: unknown;
   conversationId?: unknown;
   message?: unknown;
 };
@@ -37,8 +37,7 @@ async function parseJsonBody(request: NextRequest): Promise<ChatRequestBody> {
   }
 }
 
-function parseBody(body: ChatRequestBody): BackendChatRequest {
-  const uid = typeof body.uid === "string" ? body.uid : "";
+function parseBody(body: ChatRequestBody): Omit<BackendChatRequest, "uid"> {
   const message = typeof body.message === "string" ? body.message : "";
 
   let conversationId: string | null;
@@ -55,7 +54,6 @@ function parseBody(body: ChatRequestBody): BackendChatRequest {
   }
 
   return {
-    uid,
     conversationId,
     message,
   };
@@ -82,8 +80,14 @@ function parseBearerToken(request: NextRequest): string {
 export async function POST(request: NextRequest): Promise<NextResponse> {
   try {
     const body = await parseJsonBody(request);
-    const payload = parseBody(body);
     const idToken = parseBearerToken(request);
+    const decoded = await verifyFirebaseIdToken(idToken);
+    const parsedBody = parseBody(body);
+    const payload: BackendChatRequest = {
+      uid: decoded.uid,
+      conversationId: parsedBody.conversationId,
+      message: parsedBody.message,
+    };
     const data = await processBackendChatRequest(payload, idToken);
 
     return NextResponse.json({ data }, { status: 200 });

@@ -1,7 +1,6 @@
 import { auth } from "@/src/lib/firebase";
 
 export type SendChatApiRequest = {
-  uid: string;
   conversationId: string | null;
   message: string;
 };
@@ -100,7 +99,7 @@ export async function sendMessageToServer(
 
   const idToken = await user.getIdToken();
 
-  const response = await fetch("/api/chat/send", {
+  const response = await fetch("/api/backend/chat", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

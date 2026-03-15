@@ -50,9 +50,7 @@ AGENT_CHAT_URL=http://localhost:8082/agent/send-chat
 - `/auth/login`: Google login
 - `/auth/signup`: Google signup entrypoint
 - `/`: protected chat layout with conversation list + history
-- `/api/chat/send`: frontend-to-backend chat entrypoint
 - `/api/backend/chat`: backend chat endpoint
-- `/api/backend/auth`: backend auth-context helper
 
 ## Architecture rules
 
@@ -66,7 +64,7 @@ AGENT_CHAT_URL=http://localhost:8082/agent/send-chat
 
 ## Chat data flow
 
-1. `app/page.tsx` (container) dispatches `startConversationsListener(uid)`.
+1. `app/page.tsx` (container) dispatches `startConversationsListener()`.
 2. `chatThunks.ts` calls `firestoreChatService.listenToConversations`.
 3. Firestore snapshot data is normalized in service layer.
 4. Thunk dispatches `conversationsReceived`.
@@ -76,7 +74,7 @@ AGENT_CHAT_URL=http://localhost:8082/agent/send-chat
 When a conversation is selected:
 
 1. UI dispatches `setActiveConversation(conversationId)`.
-2. UI dispatches `startMessagesListener({ uid, conversationId })`.
+2. UI dispatches `startMessagesListener({ conversationId })`.
 3. Thunk calls `firestoreChatService.listenToMessages`.
 4. Thunk dispatches `messagesReceived`.
 5. Panel renders message history from selectors.
@@ -91,11 +89,10 @@ Message send path:
 
 1. `app/page.tsx` dispatches `sendComposerMessage`.
 2. `chatThunks.ts` calls `chatApiService.sendMessageToServer`.
-3. Browser calls `POST /api/chat/send` with Firebase ID token.
-4. `/api/chat/send` delegates to `chatBackendService`.
-5. `chatBackendService` calls `/api/backend/chat` by default.
-6. `/api/backend/chat` delegates to `src/server/chat/chatService.ts`.
-7. Server chat service persists the user message, calls the external agent, persists the system reply, and returns the result.
+3. Browser calls `POST /api/backend/chat` with Firebase ID token.
+4. `/api/backend/chat` verifies the Firebase ID token and derives trusted `uid` server-side.
+5. `/api/backend/chat` delegates to `src/server/chat/chatService.ts`.
+6. Server chat service persists the user message, calls the external agent, persists the system reply, and returns the result.
 
 ## Google Calendar OAuth flow
 

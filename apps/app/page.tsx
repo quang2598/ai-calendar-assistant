@@ -6,6 +6,7 @@ import { useSearchParams } from "next/navigation";
 
 import ChatShell from "@/app/chat/ChatShell";
 import { auth } from "@/src/lib/firebase";
+import { getCurrentAuthUid } from "@/src/services/auth/firebaseAuthService";
 import {
   selectAuthInitialized,
   selectAuthStatus,
@@ -80,16 +81,21 @@ export default function HomePage() {
   }, [initialized, isAuthenticated, router]);
 
   useEffect(() => {
-    if (!(initialized && isAuthenticated && user?.uid)) {
+    if (!(initialized && isAuthenticated)) {
       return;
     }
 
-    void dispatch(startConversationsListener(user.uid));
+    const uid = getCurrentAuthUid();
+    if (!uid) {
+      return;
+    }
+
+    void dispatch(startConversationsListener());
 
     return () => {
       void dispatch(stopChatListeners());
     };
-  }, [dispatch, initialized, isAuthenticated, user?.uid]);
+  }, [dispatch, initialized, isAuthenticated]);
 
   async function handleSignOut() {
     await dispatch(signOutUser());
@@ -98,9 +104,7 @@ export default function HomePage() {
 
   function handleSelectConversation(conversationId: string) {
     dispatch(setActiveConversation(conversationId));
-    if (user?.uid) {
-      void dispatch(startMessagesListener({ uid: user.uid, conversationId }));
-    }
+    void dispatch(startMessagesListener({ conversationId }));
   }
 
   function handleStartNewConversation() {
@@ -113,11 +117,7 @@ export default function HomePage() {
   }
 
   function handleSendMessage() {
-    if (!user?.uid) {
-      return;
-    }
-
-    void dispatch(sendComposerMessage({ uid: user.uid }));
+    void dispatch(sendComposerMessage());
   }
 
   async function handleConnectGoogleCalendar() {

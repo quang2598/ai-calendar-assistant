@@ -2,10 +2,9 @@ import { FirebaseError } from "firebase/app";
 import { doc, getDoc, serverTimestamp, setDoc, updateDoc } from "firebase/firestore";
 
 import { db } from "@/src/lib/firebase";
-import type { AuthUser } from "@/src/types/auth";
 
-export async function createUserProfile(user: AuthUser): Promise<void> {
-  const profileRef = doc(db, "users", user.uid);
+export async function createUserProfile(uid: string): Promise<void> {
+  const profileRef = doc(db, "users", uid);
 
   await setDoc(
     profileRef,

@@ -1,7 +1,6 @@
 export type AuthStatus = "anonymous" | "authenticating" | "authenticated";
 
 export type AuthUser = {
-  uid: string;
   email: string | null;
   displayName: string | null;
   photoURL: string | null;

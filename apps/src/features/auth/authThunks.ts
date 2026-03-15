@@ -72,16 +72,20 @@ export const signInWithGoogle = createAsyncThunk<
     return rejectWithValue(normalizeFirebaseAuthError(error));
   }
 
-  const { user: nextUser, isNewUser } = signInResult;
+  const { user: nextUser, uid, isNewUser } = signInResult;
   if (!nextUser) {
     return rejectWithValue("Could not read Google user.");
   }
 
+  if (!uid) {
+    return rejectWithValue("Could not read Google user uid.");
+  }
+
   try {
     if (isNewUser) {
-      await createUserProfile(nextUser);
+      await createUserProfile(uid);
     } else {
-      await updateUserLastLogin(nextUser.uid);
+      await updateUserLastLogin(uid);
     }
   } catch (error) {
     return rejectWithValue(normalizeUserProfileError(error));
