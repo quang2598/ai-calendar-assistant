@@ -1,0 +1,8 @@
+.vscode/
+.pytest_cache/
+*/.coverage
+
+.next/
+.secret/
+
+.node_modules/
