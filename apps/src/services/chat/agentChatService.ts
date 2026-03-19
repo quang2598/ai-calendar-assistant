@@ -17,7 +17,7 @@ type AgentChatErrorBody = {
   };
 };
 
-const DEFAULT_AGENT_CHAT_URL = "http://localhost:8082/agent/send-chat";
+const DEFAULT_AGENT_CHAT_URL = "http://localhost:8000/agent/send-chat";
 
 export class AgentChatServiceError extends Error {
   code: string;

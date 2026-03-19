@@ -222,7 +222,7 @@ export const sendComposerMessage = createAsyncThunk<
     return rejectWithValue(error);
   }
 
-  dispatch(sendingStarted());
+  dispatch(sendingStarted({ conversationId, messageText: message }));
 
   try {
     const data = await sendMessageToServer({
@@ -243,8 +243,8 @@ export const sendComposerMessage = createAsyncThunk<
 
     dispatch(sendingSucceeded());
   } catch (error) {
-    const message = normalizeChatApiError(error);
-    dispatch(sendingFailed(message));
-    return rejectWithValue(message);
+    const errorMessage = normalizeChatApiError(error);
+    dispatch(sendingFailed(errorMessage));
+    return rejectWithValue(errorMessage);
   }
 });

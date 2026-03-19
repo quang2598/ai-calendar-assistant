@@ -264,12 +264,10 @@ async function resolveAgentResponseText(params: {
   try {
     const agentResponse = await requestAgentChatResponse(params);
     return agentResponse.responseMessage.text;
-  } catch (error) {
-    if (error instanceof AgentChatServiceError) {
-      return FALLBACK_AGENT_RESPONSE_TEXT;
-    }
-
-    throw error;
+  } catch {
+    // Catch ALL errors (network failures, agent errors, etc.)
+    // so the user message is still saved and a response is returned.
+    return FALLBACK_AGENT_RESPONSE_TEXT;
   }
 }
 

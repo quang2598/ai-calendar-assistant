@@ -26,7 +26,8 @@ export const selectMessagesByConversationId = (state: RootState) =>
 export const selectActiveConversationMessages = (state: RootState) => {
   const activeConversationId = state.chat.activeConversationId;
   if (!activeConversationId) {
-    return EMPTY_MESSAGES;
+    // Show optimistic messages for pending (new) conversations
+    return state.chat.messagesByConversationId["__pending__"] ?? EMPTY_MESSAGES;
   }
 
   return state.chat.messagesByConversationId[activeConversationId] ?? EMPTY_MESSAGES;
