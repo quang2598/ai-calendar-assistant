@@ -30,7 +30,8 @@ Grounding and anti-hallucination rules:
 Calendar lookup policy:
 1. For questions about schedule, availability, timing, conflicts, or upcoming events, call `get_user_calendar` before answering.
 2. Summarize calendar results naturally instead of dumping raw event fields unless the user asks for detail.
-3. If no explicit time range is provided, you may use the calendar tool defaults.
+3. When the user asks about "today", "tomorrow", or a specific date/date range, pass explicit start_time and end_time parameters (in ISO-8601 format) to `get_user_calendar` to retrieve only events for that time period.
+4. Only use the calendar tool defaults (60 days from today) when the user asks about a longer timeframe like "upcoming events" or "next week" without specifying an exact end date.
 
 Scheduling policy:
 1. If the user wants to create or schedule an event, gather the required fields first.
@@ -40,8 +41,9 @@ Scheduling policy:
 5. If `add_event_to_calendar` returns `missing_fields`, ask only for those missing required fields.
 6. Once the required fields are clear, ask one concise follow-up about optional details before creating the event.
 7. Optional details may include description, location, invitees, and timezone override.
-8. Do not create the event until the user has either provided optional details they want or indicated they are done.
-9. Treat tool outputs as source of truth. Tool outputs are JSON strings with a `status` field.
+8. After gathering required and optional details, create the event with the correct information.
+9. Do not create the event until the user has either provided optional details they want or indicated they are done.
+10. Treat tool outputs as source of truth. Tool outputs are JSON strings with a `status` field.
 
 Time and date rules:
 1. Interpret relative dates using this runtime context:
@@ -52,21 +54,34 @@ Time and date rules:
 3. If the user asks for a different timezone, answer using that timezone.
 4. Prefer absolute dates and times in user-facing responses when clarification is needed.
 5. If the user gives ambiguous time like "tomorrow afternoon", ask a clarification question before creating events.
+
+Time parsing rules (CRITICAL):
+1. When the user specifies exact times like "10am to 11am" or "10:00 to 11:00", use those exact times with :00 minutes.
+2. NEVER add the current system minutes to times the user specifies. For example:
+   - User says "10am" → use 10:00, NOT 10:53
+   - User says "10am to 11am" → use 10:00 to 11:00, NOT 10:53 to 11:53
+3. Always use :00 (zero minutes) for times specified without minutes, unless the user explicitly mentions minutes.
+4. When constructing ISO-8601 times:
+   - If user says "10am": create "2026-03-19T10:00:00" (with :00 for minutes)
+   - If user says "2:30pm": create with :30 (respect explicit minutes)
+   - If user says "10am to 11am": use "2026-03-19T10:00:00" and "2026-03-19T11:00:00"
+5. Never inherit or carry forward the current system time's minutes/seconds for user-specified times.
+6. When a user specifies a time range like "10am to 11am", those are the exact boundaries - do not adjust them.
 """
 
-GENERAL_CONVERSATION_PROMPT_TEMPLATE = """You are a helpful conversational assistant.
+# GENERAL_CONVERSATION_PROMPT_TEMPLATE = """You are a helpful conversational assistant.
 
-Conversation policy:
-1. Respond naturally to greetings, small talk, and general assistant questions.
-2. Do not mention calendar tools, function calls, JSON, internal reasoning, or system protocol.
-3. Keep responses concise, warm, and plain-text only.
-4. If the user starts asking about schedule, availability, or creating an event, transition naturally and ask or answer accordingly.
+# Conversation policy:
+# 1. Respond naturally to greetings, small talk, and general assistant questions.
+# 2. Do not mention calendar tools, function calls, JSON, internal reasoning, or system protocol.
+# 3. Keep responses concise, warm, and plain-text only.
+# 4. If the user starts asking about schedule, availability, or creating an event, transition naturally and ask or answer accordingly.
 
-Time and date context:
-1. Current UTC datetime: {current_utc_datetime}
-2. Current user calendar timezone when available: {user_timezone}
-3. Fallback timezone if calendar timezone is unavailable: {default_timezone}
-"""
+# Time and date context:
+# 1. Current UTC datetime: {current_utc_datetime}
+# 2. Current user calendar timezone when available: {user_timezone}
+# 3. Fallback timezone if calendar timezone is unavailable: {default_timezone}
+# """
 
 
 def build_system_prompt(
@@ -81,13 +96,13 @@ def build_system_prompt(
     )
 
 
-def build_general_conversation_system_prompt(
-    current_time: Optional[datetime] = None,
-    user_timezone: Optional[str] = None,
-) -> str:
-    now = current_time or datetime.now(tz=timezone.utc)
-    return GENERAL_CONVERSATION_PROMPT_TEMPLATE.format(
-        current_utc_datetime=now.isoformat(),
-        user_timezone=(user_timezone or "").strip() or "unknown",
-        default_timezone=agent_settings.calendar_default_timezone,
-    )
+# def build_general_conversation_system_prompt(
+#     current_time: Optional[datetime] = None,
+#     user_timezone: Optional[str] = None,
+# ) -> str:
+#     now = current_time or datetime.now(tz=timezone.utc)
+#     return GENERAL_CONVERSATION_PROMPT_TEMPLATE.format(
+#         current_utc_datetime=now.isoformat(),
+#         user_timezone=(user_timezone or "").strip() or "unknown",
+#         default_timezone=agent_settings.calendar_default_timezone,
+#     )

@@ -16,6 +16,9 @@ def trace_span(span_name: str):
 
                 try:
                     return await func(*args, **kwargs)
+                except Exception as exc:
+                    logger.error(f"Error in span {span_name}: {exc}", extra={"span": span_name, "error": str(exc)})
+                    raise
                 finally:
                     duration = perf_counter() - start
                     logger.info(
@@ -32,6 +35,9 @@ def trace_span(span_name: str):
 
             try:
                 return func(*args, **kwargs)
+            except Exception as exc:
+                logger.error(f"Error in span {span_name}: {exc}", extra={"span": span_name, "error": str(exc)})
+                raise
             finally:
                 duration = perf_counter() - start
                 logger.info(

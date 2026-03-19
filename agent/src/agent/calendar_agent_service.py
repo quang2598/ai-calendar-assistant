@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-import re
 from typing import List
 
-from langchain.agents import AgentExecutor, create_tool_calling_agent
+from langchain.agents import create_agent
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_ollama import ChatOllama
 from loguru import logger
 
@@ -13,10 +11,7 @@ from config import trace_span
 from dto import SendChatRequest, SendChatResponse
 from utility import ConversationMessage, get_user_calendar_timezone, load_agent_history_messages
 from .agent_config import agent_settings
-from .system_prompt import (
-    build_general_conversation_system_prompt,
-    build_system_prompt,
-)
+from .system_prompt import build_system_prompt
 from .tools import build_calendar_tools
 
 
@@ -39,65 +34,8 @@ def _build_llm():
     )
 
 
-def _normalize_text(value: str) -> str:
-    return re.sub(r"\s+", " ", value.strip().lower())
-
-
-def _contains_calendar_intent(user_message: str) -> bool:
-    normalized = _normalize_text(user_message)
-    calendar_keywords = (
-        "calendar",
-        "schedule",
-        "event",
-        "meeting",
-        "availability",
-        "available",
-        "busy",
-        "free",
-        "appointment",
-        "book",
-        "reschedule",
-        "move ",
-        "invite",
-        "tomorrow",
-        "today",
-        "tonight",
-        "next week",
-        "this week",
-        "monday",
-        "tuesday",
-        "wednesday",
-        "thursday",
-        "friday",
-        "saturday",
-        "sunday",
-    )
-    if any(keyword in normalized for keyword in calendar_keywords):
-        return True
-    return re.search(r"\b\d{1,2}(:\d{2})?\s?(am|pm)\b", normalized) is not None
-
-
-def _is_general_conversation_turn(user_message: str) -> bool:
-    normalized = _normalize_text(user_message)
-    if not normalized or _contains_calendar_intent(normalized):
-        return False
-
-    general_patterns = (
-        r"^(hi|hello|hey|yo)\b[!. ]*$",
-        r"^(hi|hello|hey)\b.*\b(there|again|everyone|friend)\b[!. ]*$",
-        r"^good (morning|afternoon|evening|night)\b[!. ]*$",
-        r"^how are you\b.*$",
-        r"^i am\b.*\bhow about you\b.*$",
-        r"^what'?s up\b.*$",
-        r"^thanks\b.*$",
-        r"^thank you\b.*$",
-        r"^nice to meet you\b.*$",
-    )
-    return any(re.match(pattern, normalized) for pattern in general_patterns)
-
-
 def _looks_like_internal_protocol_leak(output_text: str) -> bool:
-    normalized = _normalize_text(output_text)
+    normalized = output_text.lower().strip()
     leak_markers = (
         "no calendar functions are needed",
         "no calendar tools are needed",
@@ -124,42 +62,27 @@ def build_langchain_history_messages(
     return results
 
 
-@trace_span("build_calendar_agent_executor")
-def build_calendar_agent_executor(uid: str, user_timezone: str) -> AgentExecutor:
+@trace_span("build_calendar_agent")
+def build_calendar_agent(uid: str, user_timezone: str):
+    """Build a calendar agent that can handle calendar operations and general conversations.
+    
+    Args:
+        uid: User ID for calendar operations
+        user_timezone: User's timezone for proper time handling
+        
+    Returns:
+        A calendar agent instance
+    """
     tools = build_calendar_tools(uid=uid)
-    prompt = ChatPromptTemplate.from_messages(
-        [
-            ("system", build_system_prompt(user_timezone=user_timezone)),
-            MessagesPlaceholder(variable_name="chat_history"),
-            ("human", "{input}"),
-            MessagesPlaceholder(variable_name="agent_scratchpad"),
-        ]
-    )
-
+    system_prompt = build_system_prompt(user_timezone=user_timezone)
     llm = _build_llm()
 
-    agent = create_tool_calling_agent(
-        llm=llm,
+    agent = create_agent(
+        model=llm,
         tools=tools,
-        prompt=prompt,
+        system_prompt=system_prompt,
     )
-    return AgentExecutor(
-        agent=agent,
-        tools=tools,
-        max_iterations=agent_settings.agent_max_iterations,
-        handle_parsing_errors=True,
-        verbose=False,
-    )
-
-
-def _build_conversation_prompt(user_timezone: str) -> ChatPromptTemplate:
-    return ChatPromptTemplate.from_messages(
-        [
-            ("system", build_general_conversation_system_prompt(user_timezone=user_timezone)),
-            MessagesPlaceholder(variable_name="chat_history"),
-            ("human", "{input}"),
-        ]
-    )
+    return agent
 
 
 @trace_span("invoke_calendar_agent")
@@ -169,37 +92,57 @@ def invoke_calendar_agent(
     user_message: str,
     chat_history: List[BaseMessage],
 ) -> str:
-    executor = build_calendar_agent_executor(uid=uid, user_timezone=user_timezone)
-    result = executor.invoke(
+    """Invoke the calendar agent to handle user messages.
+    
+    The agent can handle both calendar-related queries and general conversation
+    using detailed system prompts for proper behavior.
+    
+    Args:
+        uid: User ID
+        user_timezone: User's timezone for proper time handling
+        user_message: The user's message
+        chat_history: Previous messages in the conversation
+        
+    Returns:
+        The agent's response
+    """
+    agent = build_calendar_agent(uid=uid, user_timezone=user_timezone)
+    
+    # Build messages list for the new API
+    messages = list(chat_history) + [HumanMessage(content=user_message)]
+    
+    result = agent.invoke(
         {
-            "input": user_message,
-            "chat_history": chat_history,
+            "messages": messages,
         }
     )
 
-    output = str(result.get("output", "")).strip()
+    logger.info("Agent result type: {}, value: {}", type(result), result)
+    
+    # The new create_agent API returns various formats
+    output = ""
+    
+    # If it's a BaseMessage, extract content
+    if isinstance(result, BaseMessage):
+        output = str(result.content or "").strip()
+    # If it's a dict, check multiple possible keys
+    elif isinstance(result, dict):
+        output = result.get("output", "")
+        if not output:
+            output = result.get("messages", "")
+        if isinstance(output, list) and output:
+            # If messages is a list, get the last message's content
+            last_msg = output[-1]
+            if isinstance(last_msg, BaseMessage):
+                output = str(last_msg.content or "").strip()
+            elif isinstance(last_msg, dict):
+                output = str(last_msg.get("content", "")).strip()
+        output = str(output or "").strip()
+    else:
+        output = str(result or "").strip()
+    
     if not output:
         raise RuntimeError("Agent returned an empty response.")
-    return output
-
-
-@trace_span("invoke_conversation_reply")
-def invoke_conversation_reply(
-    user_timezone: str,
-    user_message: str,
-    chat_history: List[BaseMessage],
-) -> str:
-    prompt = _build_conversation_prompt(user_timezone=user_timezone)
-    llm = _build_llm()
-    response = (prompt | llm).invoke(
-        {
-            "input": user_message,
-            "chat_history": chat_history,
-        }
-    )
-    output = str(getattr(response, "content", "")).strip()
-    if not output:
-        raise RuntimeError("Assistant returned an empty conversational response.")
     return output
 
 
@@ -212,26 +155,18 @@ def run_calendar_agent_turn(payload: SendChatRequest) -> SendChatResponse:
     )
     langchain_history = build_langchain_history_messages(history=history)
     user_timezone = get_user_calendar_timezone(uid=payload.uid)
-    if _is_general_conversation_turn(payload.message):
-        output_text = invoke_conversation_reply(
-            user_timezone=user_timezone,
-            user_message=payload.message,
-            chat_history=langchain_history,
+    
+    logger.info("Invoking calendar agent to handle user message.")
+    output_text = invoke_calendar_agent(
+        uid=payload.uid,
+        user_timezone=user_timezone,
+        user_message=payload.message,
+        chat_history=langchain_history,
+    )
+    
+    if _looks_like_internal_protocol_leak(output_text):
+        logger.warning(
+            "Detected internal protocol leak in assistant output. "
+            "This may indicate the agent is exposing internal details."
         )
-    else:
-        output_text = invoke_calendar_agent(
-            uid=payload.uid,
-            user_timezone=user_timezone,
-            user_message=payload.message,
-            chat_history=langchain_history,
-        )
-        if _looks_like_internal_protocol_leak(output_text):
-            logger.warning(
-                "Detected internal protocol leak in assistant output; retrying without tools."
-            )
-            output_text = invoke_conversation_reply(
-                user_timezone=user_timezone,
-                user_message=payload.message,
-                chat_history=langchain_history,
-            )
     return SendChatResponse.from_text(output_text)
