@@ -4,6 +4,7 @@ import type {
   ConversationSummary,
 } from "@/src/types/chat";
 
+import CalendarPanel from "./CalendarPanel";
 import ChatPanel from "./ChatPanel";
 import ChatSidebar from "./ChatSidebar";
 
@@ -33,6 +34,14 @@ type ChatShellProps = {
   onSendMessage: () => void;
   onSelectConversation: (conversationId: string) => void;
   onSignOut: () => void;
+  isListening?: boolean;
+  isVoiceSupported?: boolean;
+  onMicToggle?: () => void;
+  voiceError?: string | null;
+  micVolume?: number;
+  micFrequencies?: number[];
+  isSpeaking?: boolean;
+  onStopSpeaking?: () => void;
 };
 
 export default function ChatShell({
@@ -61,6 +70,14 @@ export default function ChatShell({
   onSendMessage,
   onSelectConversation,
   onSignOut,
+  isListening,
+  isVoiceSupported,
+  onMicToggle,
+  voiceError,
+  micVolume,
+  micFrequencies,
+  isSpeaking,
+  onStopSpeaking,
 }: ChatShellProps) {
   return (
     <main className="h-screen bg-slate-950 text-slate-100">
@@ -93,7 +110,16 @@ export default function ChatShell({
           isAssistantTyping={isAssistantTyping}
           onComposerTextChange={onComposerTextChange}
           onSendMessage={onSendMessage}
+          isListening={isListening}
+          isVoiceSupported={isVoiceSupported}
+          onMicToggle={onMicToggle}
+          voiceError={voiceError}
+          micVolume={micVolume}
+          micFrequencies={micFrequencies}
+          isSpeaking={isSpeaking}
+          onStopSpeaking={onStopSpeaking}
         />
+        <CalendarPanel />
       </div>
     </main>
   );
