@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import os
 from typing import List
 
 from langchain.agents import create_agent
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langchain_ollama import ChatOllama
+from langchain_openai import ChatOpenAI
 from loguru import logger
 
 from config import trace_span
@@ -27,6 +29,14 @@ def _map_role_to_langchain_message(message: ConversationMessage) -> BaseMessage 
     return None
 
 def _build_llm():
+    if os.getenv("VERCEL_OIDC_TOKEN"):
+        return ChatOpenAI(
+            model=agent_settings.agent_llm_model,
+            temperature=agent_settings.agent_llm_temperature,
+            timeout=agent_settings.agent_llm_timeout_seconds,
+            api_key=os.getenv("VERCEL_OIDC_TOKEN"),
+            base_url="https://ai-gateway.vercel.sh/v1",
+        )
     return ChatOllama(
         model=agent_settings.agent_llm_model,
         temperature=agent_settings.agent_llm_temperature,
