@@ -5,7 +5,7 @@ run-agent:
 	@echo "Running agent locally..."
 	cd agent && \
 	set -a && source .env && set +a && \
-	cd src && uvicorn main:app --host 0.0.0.0 --port 8082; \
+	cd src && uvicorn main:app --host 0.0.0.0 --port 8000; \
 	_temp=$?; \
 	echo "\nCleaning up Python cache..."; \
 	find . -type d \( -name ".pytest_cache" -o -name "__pycache__" \) -exec rm -rvf {} +

@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 
 import ChatShell from "@/app/chat/ChatShell";
@@ -29,6 +29,7 @@ import {
   selectSendingError,
 } from "@/src/features/chat/chatSelectors";
 import {
+  appendComposerText,
   setComposerText,
   setActiveConversation,
   startNewConversationDraft,
@@ -41,6 +42,9 @@ import {
   stopChatListeners,
 } from "@/src/features/chat/chatThunks";
 import { useAppDispatch, useAppSelector } from "@/src/hooks";
+import { useSpeechRecognition } from "@/src/hooks/useSpeechRecognition";
+import { useSpeechSynthesis } from "@/src/hooks/useSpeechSynthesis";
+import { useAudioVisualizer } from "@/src/hooks/useAudioVisualizer";
 
 function FullScreenSpinner() {
   return (
@@ -73,6 +77,61 @@ export default function HomePage() {
   const sendingError = useAppSelector(selectSendingError);
   const isSendingMessage = useAppSelector(selectIsSendingMessage);
   const isAssistantTyping = useAppSelector(selectIsAssistantTyping);
+
+  const handleVoiceTranscript = useCallback(
+    (text: string) => {
+      dispatch(appendComposerText(text));
+    },
+    [dispatch],
+  );
+
+  const { isListening, isSupported: isVoiceSupported, startListening, stopListening, error: voiceError } =
+    useSpeechRecognition(handleVoiceTranscript);
+
+  const { volume: micVolume, frequencies: micFrequencies, startVisualizer, stopVisualizer } = useAudioVisualizer();
+
+  function handleMicToggle() {
+    if (isListening) {
+      stopListening();
+      stopVisualizer();
+    } else {
+      // Start speech recognition first — once mic is granted,
+      // start the visualizer reusing the same mic permission (1 prompt only).
+      startListening(() => {
+        void startVisualizer();
+      });
+    }
+  }
+
+  const { isSpeaking, speak, stop: stopSpeaking } = useSpeechSynthesis();
+
+  // Only speak responses that arrive AFTER the user sent a message.
+  // When clicking a conversation, isSendingMessage is false → no auto-play.
+  const shouldSpeakNextRef = useRef(false);
+  const lastSpokenMessageIdRef = useRef<string | null>(null);
+
+  // Set flag when user sends a message
+  useEffect(() => {
+    if (isSendingMessage) {
+      shouldSpeakNextRef.current = true;
+    }
+  }, [isSendingMessage]);
+
+  useEffect(() => {
+    if (!shouldSpeakNextRef.current) return;
+    if (activeMessages.length === 0) return;
+
+    const lastMessage = activeMessages[activeMessages.length - 1];
+    if (
+      lastMessage.role === "system" &&
+      lastMessage.text &&
+      lastMessage.id !== lastSpokenMessageIdRef.current
+    ) {
+      lastSpokenMessageIdRef.current = lastMessage.id;
+      shouldSpeakNextRef.current = false;
+      speak(lastMessage.text);
+    }
+  }, [activeMessages, speak]);
 
   useEffect(() => {
     if (initialized && !isAuthenticated) {
@@ -220,6 +279,14 @@ export default function HomePage() {
       onSelectConversation={handleSelectConversation}
       onSignOut={handleSignOut}
       isSigningOut={status === "authenticating"}
+      isListening={isListening}
+      isVoiceSupported={isVoiceSupported}
+      onMicToggle={handleMicToggle}
+      voiceError={voiceError}
+      micVolume={micVolume}
+      micFrequencies={micFrequencies}
+      isSpeaking={isSpeaking}
+      onStopSpeaking={stopSpeaking}
     />
   );
 }

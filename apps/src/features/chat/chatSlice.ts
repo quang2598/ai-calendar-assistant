@@ -62,19 +62,40 @@ const chatSlice = createSlice({
     setComposerText(state, action: PayloadAction<string>) {
       state.composerText = action.payload;
     },
-    sendingStarted(state) {
+    appendComposerText(state, action: PayloadAction<string>) {
+      const text = action.payload;
+      const current = state.composerText;
+      const separator = current && !current.endsWith(" ") ? " " : "";
+      state.composerText = current + separator + text;
+    },
+    sendingStarted(
+      state,
+      action: PayloadAction<{ conversationId: string | null; messageText: string }>,
+    ) {
       state.sendingStatus = "loading";
       state.sendingError = null;
       state.isAssistantTyping = true;
       state.composerText = "";
+
+      // Optimistic UI: show the user message immediately
+      const convId = action.payload.conversationId ?? "__pending__";
+      if (!state.messagesByConversationId[convId]) {
+        state.messagesByConversationId[convId] = [];
+      }
+      state.messagesByConversationId[convId].push({
+        id: `optimistic-${Date.now()}`,
+        role: "user",
+        text: action.payload.messageText,
+        createdAtMs: Date.now(),
+      });
     },
     sendingSucceeded(state) {
-      state.sendingStatus = "succeeded";
+      state.sendingStatus = "idle";
       state.sendingError = null;
       state.isAssistantTyping = false;
     },
     sendingFailed(state, action: PayloadAction<string>) {
-      state.sendingStatus = "failed";
+      state.sendingStatus = "idle";
       state.sendingError = action.payload;
       state.isAssistantTyping = false;
     },
@@ -115,6 +136,7 @@ const chatSlice = createSlice({
 });
 
 export const {
+  appendComposerText,
   clearSendingState,
   conversationsFailed,
   conversationsLoading,
