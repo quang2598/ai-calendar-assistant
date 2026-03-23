@@ -15,6 +15,8 @@ from utility import ConversationMessage, get_user_calendar_timezone, load_agent_
 from .agent_config import agent_settings
 from .system_prompt import build_system_prompt
 from .tools import build_calendar_tools
+import os
+from langchain_openai import ChatOpenAI
 
 
 

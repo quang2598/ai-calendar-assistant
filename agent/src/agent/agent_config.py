@@ -1,19 +1,14 @@
 from __future__ import annotations
 
-from pathlib import Path
 from pydantic import Field, ValidationError, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from loguru import logger
 
 agent_settings = None
 
-# Resolve .env path relative to agent directory
-ENV_FILE = Path(__file__).parent.parent.parent / ".env"
-
 class AgentSettings(BaseSettings):
     model_config = SettingsConfigDict(
-        # env_file=".env",
-        env_file=str(ENV_FILE),
+        env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
     )
