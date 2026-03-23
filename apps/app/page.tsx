@@ -1,8 +1,8 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import { Suspense,  useEffect, useState, useCallback, useRef } from "react";
 
 import ChatShell from "@/app/chat/ChatShell";
 import { auth } from "@/src/lib/firebase";
@@ -54,7 +54,7 @@ function FullScreenSpinner() {
   );
 }
 
-export default function HomePage() {
+function HomePageContent() {
   const dispatch = useAppDispatch();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -288,5 +288,13 @@ export default function HomePage() {
       isSpeaking={isSpeaking}
       onStopSpeaking={stopSpeaking}
     />
+  );
+}
+
+export default function HomePage() {
+  return (
+    <Suspense fallback={<FullScreenSpinner />}>
+      <HomePageContent />
+    </Suspense>
   );
 }
