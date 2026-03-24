@@ -4,7 +4,7 @@ import json
 from datetime import datetime
 from typing import List, Optional
 
-from langchain_core.tools import BaseTool, StructuredTool
+from langchain.tools import tool
 from pydantic import BaseModel, ConfigDict, Field
 
 from config import trace_span
@@ -126,15 +126,30 @@ def _normalize_event_creation_datetime(
     value: datetime,
     timezone_name: Optional[str],
 ) -> datetime:
+    """Normalize datetime for event creation.
+    
+    When a timezone is specified, we want to pass a naive datetime that represents
+    the wall-clock time the user requested, along with the timezone separately.
+    This ensures Google Calendar interprets "10:00 AM" as 10:00 in the user's timezone,
+    not as a UTC time that needs conversion.
+    
+    Args:
+        value: The datetime to normalize
+        timezone_name: The timezone name (if any)
+        
+    Returns:
+        A naive datetime representing the wall-clock time, or the original datetime
+        if no timezone conversion is needed.
+    """
     if timezone_name is None or not timezone_name.strip():
         return value
-    if value.tzinfo is None:
-        return value
-
-    # For scheduling, the tool-level timezone is authoritative for interpreting
-    # the user's intended wall-clock time. This avoids accidental UTC conversion
-    # by the model turning "10:00 AM" into a shifted local event time.
-    return value.replace(tzinfo=None)
+    
+    # If the datetime already has timezone info, strip it to get wall-clock time
+    if value.tzinfo is not None:
+        return value.replace(tzinfo=None)
+    
+    # If datetime is already naive, return as-is (it represents wall-clock time)
+    return value
 
 
 @trace_span("tool_get_user_calendar")
@@ -305,11 +320,20 @@ def _add_event_to_calendar_impl(
     )
 
 
-def build_calendar_tools(uid: str) -> List[BaseTool]:
+def build_calendar_tools(uid: str) -> List:
+    """Build calendar tools for a given user.
+    
+    Args:
+        uid: User ID for calendar operations
+        
+    Returns:
+        List of calendar tools
+    """
     cleaned_uid = uid.strip()
     if not cleaned_uid:
         raise ValueError("uid must not be empty when building calendar tools.")
 
+    @tool(args_schema=GetUserCalendarInput)
     def get_user_calendar(
         start_time: Optional[str] = None,
         end_time: Optional[str] = None,
@@ -317,6 +341,21 @@ def build_calendar_tools(uid: str) -> List[BaseTool]:
         calendar_id: Optional[str] = None,
         max_results: int = 20,
     ) -> str:
+        """Read events from the user's Google Calendar for a given timeframe.
+        
+        If timeframe is missing, defaults are applied.
+        Use this before answering calendar availability questions.
+        
+        Args:
+            start_time: Optional start datetime in ISO-8601 format
+            end_time: Optional end datetime in ISO-8601 format
+            timezone: Optional IANA timezone
+            calendar_id: Optional calendar id
+            max_results: Maximum number of events to return
+            
+        Returns:
+            JSON string with calendar events or error message
+        """
         return _get_user_calendar_impl(
             uid=cleaned_uid,
             start_time=start_time,
@@ -326,6 +365,7 @@ def build_calendar_tools(uid: str) -> List[BaseTool]:
             max_results=max_results,
         )
 
+    @tool(args_schema=AddEventToCalendarInput)
     def add_event_to_calendar(
         title: Optional[str] = None,
         start_time: Optional[str] = None,
@@ -336,6 +376,25 @@ def build_calendar_tools(uid: str) -> List[BaseTool]:
         invitees: Optional[List[str]] = None,
         calendar_id: Optional[str] = None,
     ) -> str:
+        """Create a Google Calendar event for the user.
+        
+        Requires title, start_time, and end_time.
+        Optional fields include description, location, invitees, and timezone.
+        If required fields are missing, the tool returns missing_fields.
+        
+        Args:
+            title: Event title (required)
+            start_time: Event start datetime in ISO-8601 format (required)
+            end_time: Event end datetime in ISO-8601 format (required)
+            timezone: Optional IANA timezone
+            description: Optional event description
+            location: Optional event location
+            invitees: Optional list of invitee email addresses
+            calendar_id: Optional calendar id
+            
+        Returns:
+            JSON string with created event or error message
+        """
         return _add_event_to_calendar_impl(
             uid=cleaned_uid,
             title=title,
@@ -348,27 +407,4 @@ def build_calendar_tools(uid: str) -> List[BaseTool]:
             calendar_id=calendar_id,
         )
 
-    get_user_calendar_tool = StructuredTool.from_function(
-        func=get_user_calendar,
-        name="get_user_calendar",
-        description=(
-            "Read events from the user's Google Calendar for a given timeframe. "
-            "If timeframe is missing, defaults are applied. "
-            "Use this before answering calendar availability questions."
-        ),
-        args_schema=GetUserCalendarInput,
-    )
-
-    add_event_to_calendar_tool = StructuredTool.from_function(
-        func=add_event_to_calendar,
-        name="add_event_to_calendar",
-        description=(
-            "Create a Google Calendar event for the user. "
-            "Requires title, start_time, and end_time. "
-            "Optional fields include description, location, invitees, and timezone. "
-            "If required fields are missing, the tool returns missing_fields."
-        ),
-        args_schema=AddEventToCalendarInput,
-    )
-
-    return [get_user_calendar_tool, add_event_to_calendar_tool]
+    return [get_user_calendar, add_event_to_calendar]

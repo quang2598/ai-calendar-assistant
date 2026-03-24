@@ -118,6 +118,6 @@ def init_agent_settings() -> AgentSettings:
 
 init_agent_settings()
 if agent_settings:
-    logger.info("Agent settings initialized successfully.")
+    logger.info("Agent settings initialized successfully. LLM Model: {}", agent_settings.agent_llm_model)
 else:
     raise RuntimeError("Agent settings initialization failed.")

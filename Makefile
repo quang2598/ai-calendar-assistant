@@ -1,11 +1,18 @@
 .DEFAULT_GOAL := help
+SHELL := /bin/bash
 
 #------------------Dev Commands------------------#
-run-agent:
+run-agent-win:
+	@echo "Running agent locally..."
+	echo "\nCleaning up Python cache..."; \
+	find . -type d \( -name ".pytest_cache" -o -name "__pycache__" \) -exec rm -rvf {} +; \
+	bash -c 'cd agent && [ -f .env ] && set -a && . .env && set +a; cd src && uvicorn main:app --host 0.0.0.0 --port 8000'
+
+run-agent-mac:
 	@echo "Running agent locally..."
 	cd agent && \
 	set -a && source .env && set +a && \
-	cd src && uvicorn main:app --host 0.0.0.0 --port 8000; \
+	cd src && uvicorn main:app --host 0.0.0.0 --port 8082; \
 	_temp=$?; \
 	echo "\nCleaning up Python cache..."; \
 	find . -type d \( -name ".pytest_cache" -o -name "__pycache__" \) -exec rm -rvf {} +

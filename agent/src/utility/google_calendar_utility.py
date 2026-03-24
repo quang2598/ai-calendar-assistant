@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Callable, List, Optional, Tuple
 from zoneinfo import ZoneInfo
 
+import pytz
 from google.auth.transport.requests import Request as GoogleAuthRequest
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import Resource, build
@@ -66,8 +67,12 @@ def _validate_timezone_name(timezone_name: str) -> str:
         raise RuntimeError("Invalid timezone: empty value")
     try:
         ZoneInfo(cleaned)
-    except Exception as exc:
-        raise RuntimeError(f"Invalid timezone: {cleaned}") from exc
+    except Exception:
+        # Fall back to pytz if ZoneInfo fails
+        try:
+            pytz.timezone(cleaned)
+        except Exception as exc:
+            raise RuntimeError(f"Invalid timezone: {cleaned}") from exc
     return cleaned
 
 
@@ -75,15 +80,37 @@ def _resolve_timezone(timezone_name: str) -> ZoneInfo:
     target_timezone = _validate_timezone_name(timezone_name)
     try:
         return ZoneInfo(target_timezone)
-    except Exception as exc:
-        raise RuntimeError(f"Invalid timezone: {target_timezone}") from exc
+    except Exception:
+        # If ZoneInfo fails, try to use pytz
+        try:
+            return pytz.timezone(target_timezone)
+        except Exception as exc:
+            raise RuntimeError(f"Invalid timezone: {target_timezone}") from exc
 
 
 def _ensure_datetime_timezone(value: datetime, timezone_name: str) -> datetime:
+    """Attach timezone info to a datetime, correctly handling both ZoneInfo and pytz.
+    
+    Args:
+        value: The datetime (may be naive or aware)
+        timezone_name: The timezone name
+        
+    Returns:
+        A datetime with proper timezone information
+    """
     target_timezone = _resolve_timezone(timezone_name)
+    
     if value.tzinfo is None:
-        return value.replace(tzinfo=target_timezone)
-    return value.astimezone(target_timezone)
+        # Naive datetime - attach timezone
+        if isinstance(target_timezone, ZoneInfo):
+            # ZoneInfo: use replace() since ZoneInfo works correctly
+            return value.replace(tzinfo=target_timezone)
+        else:
+            # pytz: must use localize() to avoid time corruption
+            return target_timezone.localize(value)
+    else:
+        # Aware datetime - convert to target timezone
+        return value.astimezone(target_timezone)
 
 
 def _normalize_to_utc(value: datetime) -> datetime:
@@ -230,7 +257,6 @@ def _extract_timezone(payload: object, field_name: str) -> Optional[str]:
 def get_user_calendar_timezone(uid: str, calendar_id: Optional[str] = None) -> str:
     fallback_timezone = _fallback_timezone_name()
     resolved_calendar_id = _resolve_calendar_id(calendar_id)
-
     def settings_operation(service: Resource) -> object:
         return service.settings().get(setting="timezone").execute()
 
@@ -245,6 +271,7 @@ def get_user_calendar_timezone(uid: str, calendar_id: Optional[str] = None) -> s
     else:
         timezone_name = _extract_timezone(response, "value")
         if timezone_name is not None:
+            logger.info("User calendar timezone: {}", timezone_name)
             return timezone_name
 
     def calendar_operation(service: Resource) -> object:
@@ -258,6 +285,7 @@ def get_user_calendar_timezone(uid: str, calendar_id: Optional[str] = None) -> s
             uid,
             exc,
         )
+        logger.info("User calendar fallback timezone: {}", fallback_timezone)
         return fallback_timezone
 
     timezone_name = _extract_timezone(response, "timeZone")
@@ -407,6 +435,15 @@ def list_user_calendar_events(
         raise RuntimeError(f"Failed to list calendar events for user {uid}: {exc}") from exc
 
     items = list((response or {}).get("items", []))
+    events = [_map_calendar_event(item) for item in items]
+    # logger.info(
+    #     "Listed calendar events for user {}: requested_window=({} to {}), effective_timezone={}, returned_events={}",
+    #     uid,
+    #     window_start.isoformat(),
+    #     window_end.isoformat(),
+    #     effective_timezone_name,
+    #     events,
+    # )
     return [_map_calendar_event(item) for item in items]
 
 
