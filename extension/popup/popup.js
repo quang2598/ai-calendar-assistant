@@ -4,7 +4,7 @@ const AGENT_URL = "http://localhost:8000";
 const AGENT_CHAT_URL = `${AGENT_URL}/agent/send-chat`;
 const TTS_URL = `${API_BASE}/api/speech/synthesize`;
 const SILENCE_TIMEOUT_MS = 1200;
-const FIREBASE_API_KEY = "AIzaSyCsctcOVlSKYeuYD9RICBdZnntNdJHjnqI";
+const FIREBASE_API_KEY = "";
 
 // ─── DOM Elements ───
 const authScreen = document.getElementById("auth-screen");
