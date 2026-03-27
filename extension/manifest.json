@@ -12,7 +12,7 @@
     "offscreen"
   ],
   "oauth2": {
-    "client_id": "302306326203-p0l19obhof0uonmetrjkhn57tf7idfve.apps.googleusercontent.com",
+    "client_id": "",
     "scopes": [
       "https://www.googleapis.com/auth/userinfo.email",
       "https://www.googleapis.com/auth/userinfo.profile",
