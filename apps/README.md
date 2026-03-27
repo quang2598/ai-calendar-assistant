@@ -52,6 +52,27 @@ AGENT_CHAT_URL=http://localhost:8082/agent/send-chat
 - `/`: protected chat layout with conversation list + history
 - `/api/backend/chat`: backend chat endpoint
 
+## Google site verification
+
+For Google Search Console or OAuth homepage ownership verification using the
+HTML-file method, place the exact verification file downloaded from Google into:
+
+```text
+apps/public/
+```
+
+Example:
+
+```text
+apps/public/google0bb9d237c43185ad.html
+```
+
+After deployment, the file will be served from the site root, for example:
+
+```text
+https://your-domain.example/google0bb9d237c43185ad.html
+```
+
 ## Architecture rules
 
 - Pages/components do not call Firebase SDK directly.
