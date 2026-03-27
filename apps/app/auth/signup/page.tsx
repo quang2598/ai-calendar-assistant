@@ -70,8 +70,8 @@ export default function SignupPage() {
 
   return (
     <AuthScreen
-      badgeText="AI Calendar Assistant"
-      heroTitle="Create your account and start planning conversations."
+      badgeText="VietCalenAI"
+      heroTitle="Create your VietCalenAI account and start planning conversations."
       heroDescription="Continue with Google to create your workspace in seconds."
       cardTitle="Create account"
       cardDescription="Continue with Google to get started."

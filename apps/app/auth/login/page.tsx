@@ -70,8 +70,8 @@ export default function LoginPage() {
 
   return (
     <AuthScreen
-      badgeText="AI Calendar Assistant"
-      heroTitle="Plan smarter with a secure personal chat workspace."
+      badgeText="VietCalenAI"
+      heroTitle="VietCalenAI helps you plan smarter with a secure personal chat workspace."
       heroDescription="Continue with Google to access your workspace."
       cardTitle="Sign in"
       cardDescription="Continue with Google to enter your workspace."

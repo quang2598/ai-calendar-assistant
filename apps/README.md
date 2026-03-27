@@ -1,4 +1,4 @@
-# AI Calendar Assistant
+# VietCalenAI
 
 Next.js App Router full-stack application with Redux Toolkit on the client, backend route handlers in `app/api`, and server-only domain logic in `src/server`.
 
