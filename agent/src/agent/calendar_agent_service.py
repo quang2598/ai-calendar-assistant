@@ -14,7 +14,7 @@ from dto import SendChatRequest, SendChatResponse
 from utility import ConversationMessage, get_user_calendar_timezone, load_agent_history_messages
 from .agent_config import agent_settings
 from .system_prompt import build_system_prompt
-from .tools import build_calendar_tools
+from .tools import build_calendar_tools, build_location_tools
 import os
 from langchain_openai import ChatOpenAI
 
@@ -76,7 +76,7 @@ def build_langchain_history_messages(
 
 @trace_span("build_calendar_agent")
 def build_calendar_agent(uid: str, user_timezone: str):
-    """Build a calendar agent that can handle calendar operations and general conversations.
+    """Build a calendar agent that can handle calendar operations, location-based services, and general conversations.
     
     Args:
         uid: User ID for calendar operations
@@ -85,13 +85,28 @@ def build_calendar_agent(uid: str, user_timezone: str):
     Returns:
         A calendar agent instance
     """
-    tools = build_calendar_tools(uid=uid)
+    # Build calendar tools
+    calendar_tools = build_calendar_tools(uid=uid)
+    
+    # Build location tools if API key is available
+    location_tools = []
+    if agent_settings.google_places_api_key:
+        try:
+            location_tools = build_location_tools(
+                google_places_api_key=agent_settings.google_places_api_key,
+            )
+        except ValueError as exc:
+            logger.warning("Could not build location tools: {}", exc)
+    
+    # Combine all tools
+    all_tools = calendar_tools + location_tools
+    
     system_prompt = build_system_prompt(user_timezone=user_timezone)
     llm = _build_llm()
 
     agent = create_agent(
         model=llm,
-        tools=tools,
+        tools=all_tools,
         system_prompt=system_prompt,
     )
     return agent
@@ -166,9 +181,37 @@ def run_calendar_agent_turn(payload: SendChatRequest) -> SendChatResponse:
         latest_user_message=payload.message,
     )
     langchain_history = build_langchain_history_messages(history=history)
-    user_timezone = get_user_calendar_timezone(uid=payload.uid)
     
-    logger.info("Invoking calendar agent to handle user message.")
+    # Try to get user's timezone from Google Calendar settings
+    # This is the primary source of truth for user's timezone
+    user_timezone = None
+    try:
+        user_timezone = get_user_calendar_timezone(uid=payload.uid)
+        if user_timezone and user_timezone.strip().lower() != "unknown":
+            logger.info("Retrieved user timezone from Google Calendar: {}", user_timezone)
+    except Exception as exc:
+        logger.warning("Failed to retrieve user timezone from Google Calendar: {}", exc)
+    
+    # If we couldn't get timezone from Google Calendar, check if it's been established in the conversation
+    if not user_timezone or user_timezone.strip().lower() == "unknown":
+        # Check conversation history for timezone information
+        # Look for patterns in previous responses that might indicate user has provided timezone
+        for msg in history:
+            msg_lower = msg.text.lower()
+            # Check if user has mentioned common timezone indicators
+            if any(tz_indicator in msg_lower for tz_indicator in [
+                "america/", "europe/", "asia/", "australia/", "pacific/",
+                "utc", "est", "cst", "mst", "pst", "gmt", "timezone"
+            ]):
+                # User has mentioned timezone info in conversation
+                logger.info("Detected potential timezone mention in conversation history")
+                break
+        
+        # Fallback to agent settings default, but mark as fallback
+        user_timezone = agent_settings.calendar_default_timezone
+        logger.info("User timezone not explicitly set; will use fallback and may prompt user: {}", user_timezone)
+    
+    logger.info("Invoking calendar agent with user_timezone: {}", user_timezone)
     output_text = invoke_calendar_agent(
         uid=payload.uid,
         user_timezone=user_timezone,

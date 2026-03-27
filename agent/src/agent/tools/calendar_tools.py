@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from datetime import datetime
 from typing import List, Optional
+from zoneinfo import ZoneInfo
 
 from langchain.tools import tool
 from pydantic import BaseModel, ConfigDict, Field
@@ -129,24 +130,29 @@ def _normalize_event_creation_datetime(
     """Normalize datetime for event creation.
     
     When a timezone is specified, we want to pass a naive datetime that represents
-    the wall-clock time the user requested, along with the timezone separately.
+    the wall-clock time in the user's timezone, along with the timezone separately.
     This ensures Google Calendar interprets "10:00 AM" as 10:00 in the user's timezone,
     not as a UTC time that needs conversion.
     
     Args:
-        value: The datetime to normalize
+        value: The datetime to normalize (may be timezone-aware or naive)
         timezone_name: The timezone name (if any)
         
     Returns:
-        A naive datetime representing the wall-clock time, or the original datetime
-        if no timezone conversion is needed.
+        A naive datetime representing the wall-clock time in the user's timezone.
     """
     if timezone_name is None or not timezone_name.strip():
         return value
     
-    # If the datetime already has timezone info, strip it to get wall-clock time
+    # If the datetime has timezone info, convert to user's timezone first
     if value.tzinfo is not None:
-        return value.replace(tzinfo=None)
+        try:
+            tz = ZoneInfo(timezone_name)
+            local_dt = value.astimezone(tz)
+            return local_dt.replace(tzinfo=None)
+        except Exception:
+            # If timezone conversion fails, just strip the tzinfo
+            return value.replace(tzinfo=None)
     
     # If datetime is already naive, return as-is (it represents wall-clock time)
     return value
@@ -178,6 +184,14 @@ def _get_user_calendar_impl(
         return _json_tool_response(
             status="error",
             message=f"Failed to resolve calendar timezone: {exc}",
+        )
+    
+    # Check if timezone is unknown - this indicates user hasn't set their timezone yet
+    if timezone_used.lower() == "unknown":
+        return _json_tool_response(
+            status="timezone_required",
+            message="I need to know your timezone before I can access your calendar. "
+                   "Could you please tell me your timezone? For example: America/New_York, Europe/London, Asia/Tokyo, etc.",
         )
 
     try:
@@ -241,7 +255,8 @@ def _add_event_to_calendar_impl(
 ) -> str:
     missing_fields: List[str] = []
 
-    cleaned_title = (title or "").strip()
+    cleaned_title = (title or "").strip().capitalize()
+    cleaned_description = (description or "").strip().capitalize()
     cleaned_start_time = (start_time or "").strip()
     cleaned_end_time = (end_time or "").strip()
 
@@ -279,6 +294,14 @@ def _add_event_to_calendar_impl(
             status="error",
             message=f"Failed to resolve calendar timezone: {exc}",
         )
+    
+    # Check if timezone is unknown - this indicates user hasn't set their timezone yet
+    if timezone_used.lower() == "unknown":
+        return _json_tool_response(
+            status="timezone_required",
+            message="I need to know your timezone before I can create calendar events. "
+                   "Could you please tell me your timezone? For example: America/New_York, Europe/London, Asia/Tokyo, etc.",
+        )
 
     try:
         normalized_start_dt = _normalize_event_creation_datetime(start_dt, timezone_used)
@@ -290,7 +313,7 @@ def _add_event_to_calendar_impl(
                 start_time=normalized_start_dt,
                 end_time=normalized_end_dt,
                 timezone_name=timezone_used,
-                description=description,
+                description=cleaned_description,
                 location=location,
                 invitees=invitees,
                 calendar_id=calendar_id,
