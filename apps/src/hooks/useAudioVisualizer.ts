@@ -22,7 +22,7 @@ export function useAudioVisualizer(): UseAudioVisualizerReturn {
   const streamRef = useRef<MediaStream | null>(null);
   const rafIdRef = useRef<number | null>(null);
 
-  const tick = useCallback(() => {
+  const tick = useCallback(function tickFrame() {
     const analyser = analyserRef.current;
     if (!analyser) return;
 
@@ -47,7 +47,7 @@ export function useAudioVisualizer(): UseAudioVisualizerReturn {
     }
     setFrequencies(bars);
 
-    rafIdRef.current = requestAnimationFrame(tick);
+    rafIdRef.current = requestAnimationFrame(tickFrame);
   }, []);
 
   const stopVisualizer = useCallback(() => {

@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 import type { AsyncStatus, ConversationSummary } from "@/src/types/chat";
 import UserAvatar from "./UserAvatar";
 
@@ -126,6 +128,21 @@ export default function ChatSidebar({
         >
           {isSigningOut ? "Signing out..." : "Sign out"}
         </button>
+        <div className="mt-4 flex items-center justify-center gap-3 text-xs text-slate-500">
+          <Link
+            href="/terms-and-policies"
+            className="transition hover:text-slate-300"
+          >
+            Terms
+          </Link>
+          <span aria-hidden="true">•</span>
+          <Link
+            href="/privacy-notice"
+            className="transition hover:text-slate-300"
+          >
+            Privacy
+          </Link>
+        </div>
       </div>
     </aside>
   );

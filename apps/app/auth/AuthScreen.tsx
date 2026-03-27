@@ -77,6 +77,22 @@ export default function AuthScreen({
                 {footerLinkLabel}
               </Link>
             </p>
+
+            <div className="mt-5 flex items-center justify-center gap-4 text-xs text-slate-500">
+              <Link
+                href="/terms-and-policies"
+                className="transition hover:text-slate-300"
+              >
+                Terms and Policies
+              </Link>
+              <span aria-hidden="true">•</span>
+              <Link
+                href="/privacy-notice"
+                className="transition hover:text-slate-300"
+              >
+                Privacy Notice
+              </Link>
+            </div>
           </div>
         </section>
       </div>

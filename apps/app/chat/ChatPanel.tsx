@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 import type {
   AsyncStatus,
   ConversationMessage,
@@ -69,7 +71,21 @@ export default function ChatPanel({
             Chat Preview
           </span>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-4">
+          <nav className="hidden items-center gap-3 text-xs text-slate-400 sm:flex">
+            <Link
+              href="/terms-and-policies"
+              className="transition hover:text-slate-200"
+            >
+              Terms
+            </Link>
+            <Link
+              href="/privacy-notice"
+              className="transition hover:text-slate-200"
+            >
+              Privacy
+            </Link>
+          </nav>
           {isSpeaking && onStopSpeaking && (
             <button
               type="button"
