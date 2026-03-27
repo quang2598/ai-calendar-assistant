@@ -25,6 +25,9 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
+      <head>
+        <meta name="google-site-verification" content="u3Dty_Qsps2Y82gud6NhFe-vEN6TA67v3rT3tORXUPI" />
+      </head>
       <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
         <ReduxProvider>{children}</ReduxProvider>
       </body>
