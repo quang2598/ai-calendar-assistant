@@ -17,6 +17,9 @@ from .firestore_utility import (
     UserGoogleToken,
     fetch_user_google_token,
     update_user_google_access_token,
+    store_agent_created_event,
+    get_agent_created_event,
+    update_agent_event_snapshot,
 )
 
 GOOGLE_CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar"
@@ -502,3 +505,294 @@ def create_user_calendar_event(uid: str, request: CreateCalendarEventRequest) ->
         raise RuntimeError(f"Failed to create calendar event for user {uid}: {exc}") from exc
 
     return _map_calendar_event(created_event or {})
+
+
+# Modify, Delete, and Rollback Functions
+# ========================================
+
+
+@dataclass(frozen=True)
+class ModifyCalendarEventRequest:
+    event_id: str
+    title: Optional[str] = None
+    start_time: Optional[datetime] = None
+    end_time: Optional[datetime] = None
+    timezone_name: Optional[str] = None
+    description: Optional[str] = None
+    location: Optional[str] = None
+    invitees: Optional[List[str]] = None
+    calendar_id: Optional[str] = None
+
+
+@trace_span("modify_user_calendar_event")
+def modify_user_calendar_event(
+    uid: str,
+    request: ModifyCalendarEventRequest,
+) -> CalendarEvent:
+    """
+    Modify an existing calendar event.
+    
+    Args:
+        uid: User ID
+        request: Modification request with event_id and fields to update
+        
+    Returns:
+        Updated CalendarEvent
+        
+    Raises:
+        RuntimeError: If event not found, modification fails, or user doesn't have permission
+    """
+    resolved_calendar_id = _resolve_calendar_id(request.calendar_id)
+    event_id = request.event_id.strip()
+    
+    if not event_id:
+        raise ValueError("event_id must not be empty")
+    
+    # Fetch the current event first
+    def get_operation(service: Resource) -> object:
+        return service.events().get(calendarId=resolved_calendar_id, eventId=event_id).execute()
+    
+    try:
+        current_event = _execute_with_auth_retry(uid=uid, operation=get_operation)
+    except HttpError as exc:
+        status_code = _http_error_status_code(exc)
+        if status_code == 404:
+            raise RuntimeError(f"Calendar event not found: event_id={event_id}")
+        raise RuntimeError(f"Failed to fetch calendar event for modification: {exc}") from exc
+    
+    # Build update payload
+    update_payload = {}
+    
+    # Handle title - always include existing title to prevent it from being lost
+    if request.title is not None:
+        cleaned_title = request.title.strip()
+        if cleaned_title:
+            update_payload["summary"] = cleaned_title
+        # If title is empty string, keep the existing title
+        else:
+            existing_title = str(current_event.get("summary", "")).strip()
+            if existing_title:
+                update_payload["summary"] = existing_title
+    else:
+        # If title is None (not being changed), preserve the existing title
+        existing_title = str(current_event.get("summary", "")).strip()
+        if existing_title:
+            update_payload["summary"] = existing_title
+    
+    if request.start_time is not None or request.end_time is not None:
+        effective_timezone_name = request.timezone_name or _extract_timezone(current_event, "timeZone") or _fallback_timezone_name()
+        
+        if request.start_time is not None:
+            event_start = _ensure_datetime_timezone(request.start_time, effective_timezone_name)
+            update_payload["start"] = {
+                "dateTime": event_start.isoformat(),
+                "timeZone": effective_timezone_name,
+            }
+        
+        if request.end_time is not None:
+            event_end = _ensure_datetime_timezone(request.end_time, effective_timezone_name)
+            update_payload["end"] = {
+                "dateTime": event_end.isoformat(),
+                "timeZone": effective_timezone_name,
+            }
+        
+        # Validate that start < end
+        start_val = update_payload.get("start") or current_event.get("start")
+        end_val = update_payload.get("end") or current_event.get("end")
+        if start_val and end_val:
+            start_str = str(start_val.get("dateTime", "") or start_val.get("date", ""))
+            end_str = str(end_val.get("dateTime", "") or end_val.get("date", ""))
+            if start_str >= end_str:
+                raise ValueError("Event end_time must be after start_time")
+    
+    # Handle description - preserve existing if not being changed
+    if request.description is not None:
+        update_payload["description"] = request.description.strip() or None
+    else:
+        existing_description = current_event.get("description")
+        if existing_description:
+            update_payload["description"] = existing_description
+    
+    # Handle location - preserve existing if not being changed
+    if request.location is not None:
+        update_payload["location"] = request.location.strip() or None
+    else:
+        existing_location = current_event.get("location")
+        if existing_location:
+            update_payload["location"] = existing_location
+    
+    # Handle invitees/attendees - preserve existing if not being changed
+    if request.invitees is not None:
+        normalized_invitees = _normalize_invitees(request.invitees)
+        update_payload["attendees"] = [{"email": invitee} for invitee in normalized_invitees] or None
+    else:
+        existing_attendees = current_event.get("attendees")
+        if existing_attendees:
+            update_payload["attendees"] = existing_attendees
+    
+    if not update_payload:
+        raise ValueError("No fields provided to update")
+    
+    # Perform the update
+    def update_operation(service: Resource) -> object:
+        return (
+            service.events()
+            .update(
+                calendarId=resolved_calendar_id,
+                eventId=event_id,
+                body=update_payload,
+            )
+            .execute()
+        )
+    
+    try:
+        updated_event = _execute_with_auth_retry(uid=uid, operation=update_operation)
+    except HttpError as exc:
+        raise RuntimeError(f"Failed to modify calendar event {event_id}: {exc}") from exc
+    
+    return _map_calendar_event(updated_event or {})
+
+
+@trace_span("delete_user_calendar_event")
+def delete_user_calendar_event(
+    uid: str,
+    event_id: str,
+    calendar_id: Optional[str] = None,
+) -> None:
+    """
+    Delete a calendar event.
+    
+    Args:
+        uid: User ID
+        event_id: Google Calendar event ID
+        calendar_id: Optional calendar ID (defaults to configured calendar)
+        
+    Raises:
+        RuntimeError: If event not found, deletion fails, or user doesn't have permission
+    """
+    resolved_calendar_id = _resolve_calendar_id(calendar_id)
+    cleaned_event_id = event_id.strip()
+    
+    if not cleaned_event_id:
+        raise ValueError("event_id must not be empty")
+    
+    def operation(service: Resource) -> object:
+        service.events().delete(
+            calendarId=resolved_calendar_id,
+            eventId=cleaned_event_id,
+        ).execute()
+        return None
+    
+    try:
+        _execute_with_auth_retry(uid=uid, operation=operation)
+    except HttpError as exc:
+        status_code = _http_error_status_code(exc)
+        if status_code == 404:
+            raise RuntimeError(f"Calendar event not found: event_id={cleaned_event_id}")
+        raise RuntimeError(f"Failed to delete calendar event {cleaned_event_id}: {exc}") from exc
+    
+    logger.info("Deleted calendar event: uid={}, eventId={}", uid, cleaned_event_id)
+
+
+@trace_span("rollback_user_calendar_event")
+def rollback_user_calendar_event(
+    uid: str,
+    event_id: str,
+    previous_snapshot: dict,
+    calendar_id: Optional[str] = None,
+) -> CalendarEvent:
+    """
+    Restore a calendar event to its previous state using a saved snapshot.
+    This is used for undoing modifications or recreating deleted events.
+    
+    Args:
+        uid: User ID
+        event_id: Google Calendar event ID
+        previous_snapshot: The previous event state to restore
+        calendar_id: Optional calendar ID (defaults to configured calendar)
+        
+    Returns:
+        CalendarEvent with the restored data
+        
+    Raises:
+        RuntimeError: If rollback fails
+    """
+    if not isinstance(previous_snapshot, dict) or not previous_snapshot:
+        raise ValueError("previous_snapshot must be a non-empty dictionary")
+    
+    resolved_calendar_id = _resolve_calendar_id(calendar_id)
+    cleaned_event_id = event_id.strip()
+    
+    if not cleaned_event_id:
+        raise ValueError("event_id must not be empty")
+    
+    # Try to get the current event to see if it still exists
+    def get_operation(service: Resource) -> object:
+        return service.events().get(calendarId=resolved_calendar_id, eventId=cleaned_event_id).execute()
+    
+    event_exists = True
+    try:
+        _execute_with_auth_retry(uid=uid, operation=get_operation)
+    except HttpError as exc:
+        status_code = _http_error_status_code(exc)
+        if status_code == 404:
+            event_exists = False
+        else:
+            raise RuntimeError(f"Failed to check event status for rollback: {exc}") from exc
+    
+    # Build update payload from snapshot
+    update_payload = {}
+    if "summary" in previous_snapshot:
+        update_payload["summary"] = previous_snapshot.get("summary")
+    if "description" in previous_snapshot:
+        update_payload["description"] = previous_snapshot.get("description")
+    if "location" in previous_snapshot:
+        update_payload["location"] = previous_snapshot.get("location")
+    if "start" in previous_snapshot:
+        update_payload["start"] = previous_snapshot.get("start")
+    if "end" in previous_snapshot:
+        update_payload["end"] = previous_snapshot.get("end")
+    if "attendees" in previous_snapshot:
+        update_payload["attendees"] = previous_snapshot.get("attendees")
+    
+    if not update_payload:
+        raise ValueError("previous_snapshot does not contain any valid event fields")
+    
+    if event_exists:
+        # Event exists, update it
+        def update_operation(service: Resource) -> object:
+            return (
+                service.events()
+                .update(
+                    calendarId=resolved_calendar_id,
+                    eventId=cleaned_event_id,
+                    body=update_payload,
+                )
+                .execute()
+            )
+        
+        try:
+            restored_event = _execute_with_auth_retry(uid=uid, operation=update_operation)
+        except HttpError as exc:
+            raise RuntimeError(f"Failed to restore calendar event {cleaned_event_id}: {exc}") from exc
+    else:
+        # Event was deleted, recreate it using the snapshot
+        # The snapshot should contain all necessary fields: summary, start, end, description, location, attendees
+        # Use update_payload which was built from the snapshot
+        def create_operation(service: Resource) -> object:
+            return (
+                service.events()
+                .insert(
+                    calendarId=resolved_calendar_id,
+                    body=update_payload,
+                )
+                .execute()
+            )
+        
+        try:
+            restored_event = _execute_with_auth_retry(uid=uid, operation=create_operation)
+        except HttpError as exc:
+            raise RuntimeError(f"Failed to restore deleted calendar event: {exc}") from exc
+    
+    logger.info("Rolled back calendar event: uid={}, eventId={}", uid, cleaned_event_id)
+    return _map_calendar_event(restored_event or {})
