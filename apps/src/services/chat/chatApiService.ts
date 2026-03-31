@@ -1,8 +1,15 @@
 import { auth } from "@/src/lib/firebase";
 
+export type UserLocation = {
+  latitude: number;
+  longitude: number;
+  accuracy?: number;
+};
+
 export type SendChatApiRequest = {
   conversationId: string | null;
   message: string;
+  userLocation?: UserLocation | null;
 };
 
 export type SendChatApiResponse = {
@@ -43,7 +50,11 @@ function isNonEmptyString(value: unknown): value is string {
 
 function parseSuccessData(data: unknown): SendChatApiResponse {
   if (typeof data !== "object" || data === null) {
-    throw new ChatApiServiceError("Invalid chat API response payload.", "INVALID_RESPONSE", 502);
+    throw new ChatApiServiceError(
+      "Invalid chat API response payload.",
+      "INVALID_RESPONSE",
+      502,
+    );
   }
 
   const payload = data as Record<string, unknown>;
@@ -94,7 +105,11 @@ export async function sendMessageToServer(
 ): Promise<SendChatApiResponse> {
   const user = auth.currentUser;
   if (!user) {
-    throw new ChatApiServiceError("User is not authenticated.", "UNAUTHORIZED", 401);
+    throw new ChatApiServiceError(
+      "User is not authenticated.",
+      "UNAUTHORIZED",
+      401,
+    );
   }
 
   const idToken = await user.getIdToken();
@@ -117,7 +132,10 @@ export async function sendMessageToServer(
       body = null;
     }
 
-    const code = typeof body?.error?.code === "string" ? body.error.code : "CHAT_API_ERROR";
+    const code =
+      typeof body?.error?.code === "string"
+        ? body.error.code
+        : "CHAT_API_ERROR";
     const message =
       typeof body?.error?.message === "string"
         ? body.error.message
@@ -131,7 +149,11 @@ export async function sendMessageToServer(
   try {
     body = (await response.json()) as ApiSuccessBody;
   } catch {
-    throw new ChatApiServiceError("Chat API returned invalid JSON.", "INVALID_RESPONSE", 502);
+    throw new ChatApiServiceError(
+      "Chat API returned invalid JSON.",
+      "INVALID_RESPONSE",
+      502,
+    );
   }
 
   return parseSuccessData(body.data);

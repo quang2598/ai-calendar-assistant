@@ -1,7 +1,14 @@
+export type UserLocation = {
+  latitude: number;
+  longitude: number;
+  accuracy?: number;
+};
+
 export type SendChatRequest = {
   uid: string;
   conversationId: string | null;
   message: string;
+  userLocation?: UserLocation | null;
 };
 
 export type SendChatResponse = {
@@ -119,7 +126,11 @@ export async function sendMessageToChatBackend(params: {
   const backendUrl = resolveBackendUrl(origin);
 
   if (!idToken.trim()) {
-    throw new ChatBackendServiceError("Missing Firebase ID token.", "UNAUTHORIZED", 401);
+    throw new ChatBackendServiceError(
+      "Missing Firebase ID token.",
+      "UNAUTHORIZED",
+      401,
+    );
   }
 
   const response = await fetch(backendUrl, {

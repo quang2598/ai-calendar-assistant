@@ -10,9 +10,16 @@ import {
 
 export const runtime = "nodejs";
 
+type UserLocation = {
+  latitude?: unknown;
+  longitude?: unknown;
+  accuracy?: unknown;
+};
+
 type ChatRequestBody = {
   conversationId?: unknown;
   message?: unknown;
+  userLocation?: unknown;
 };
 
 function errorResponse(error: unknown): NextResponse {
@@ -41,7 +48,10 @@ function parseBody(body: ChatRequestBody): Omit<BackendChatRequest, "uid"> {
   const message = typeof body.message === "string" ? body.message : "";
 
   let conversationId: string | null;
-  if (body.conversationId === null || typeof body.conversationId === "undefined") {
+  if (
+    body.conversationId === null ||
+    typeof body.conversationId === "undefined"
+  ) {
     conversationId = null;
   } else if (typeof body.conversationId === "string") {
     conversationId = body.conversationId;
@@ -53,9 +63,30 @@ function parseBody(body: ChatRequestBody): Omit<BackendChatRequest, "uid"> {
     );
   }
 
+  // Parse userLocation if provided
+  let userLocation: UserLocation | null = null;
+  if (body.userLocation && typeof body.userLocation === "object") {
+    const loc = body.userLocation as Record<string, unknown>;
+    if (
+      typeof loc.latitude === "number" &&
+      typeof loc.longitude === "number" &&
+      loc.latitude >= -90 &&
+      loc.latitude <= 90 &&
+      loc.longitude >= -180 &&
+      loc.longitude <= 180
+    ) {
+      userLocation = {
+        latitude: loc.latitude,
+        longitude: loc.longitude,
+        accuracy: typeof loc.accuracy === "number" ? loc.accuracy : undefined,
+      };
+    }
+  }
+
   return {
     conversationId,
     message,
+    userLocation,
   };
 }
 
@@ -87,6 +118,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       uid: decoded.uid,
       conversationId: parsedBody.conversationId,
       message: parsedBody.message,
+      userLocation: parsedBody.userLocation,
     };
     const data = await processBackendChatRequest(payload, idToken);
 

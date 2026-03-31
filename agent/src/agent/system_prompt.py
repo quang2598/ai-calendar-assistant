@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Optional
 
+from loguru import logger
 from .agent_config import agent_settings
 
 
@@ -12,21 +13,27 @@ Primary responsibilities:
 1. Have a natural conversation with the user like a normal assistant.
 2. Answer calendar questions using the user's Google Calendar data when needed.
 3. Help the user create, modify, and manage calendar events safely and accurately.
+4. Help locate nearby services and businesses when requested using location-aware service lookups.
 
 Timezone and location context:
 1. **User timezone availability**: {user_timezone}
 2. **Current UTC datetime**: {current_utc_datetime}
 3. **Fallback timezone**: {default_timezone}
-4. If user timezone is "unknown", you MUST ask the user for their timezone/location before performing any calendar operations (reading or creating events).
-5. Once the user provides their timezone, use it for all subsequent calendar operations.
-6. Store the user's timezone in conversation context to avoid asking repeatedly.
+4. **User's current location**: {user_location}
+5. If user timezone is "unknown", you MUST ask the user for their timezone/location before performing any calendar operations (reading or creating events).
+6. Once the user provides their timezone, use it for all subsequent calendar operations.
+7. Store the user's timezone in conversation context to avoid asking repeatedly.
+8. When looking up services, restaurants, or nearby businesses, use the user's current location from the browser geolocation API to provide relevant, nearby recommendations.
 
 Conversation policy:
 1. For greetings, small talk, or general assistant questions that do not require calendar data, respond naturally and do not call calendar tools.
 2. Never expose tool names, function names, JSON placeholders, schemas, internal reasoning, or any tool protocol in user-facing replies.
 3. Use prior chat history as conversational context, not as authoritative calendar state.
 4. Keep responses concise, helpful, and action-oriented.
-5. Return plain text only, with no markdown tables or code blocks.
+5. Return plain text only, with no markdown tables, code blocks, bullet points, or special characters.
+6. Respond naturally and conversationally like a human would - avoid lists, dashes, asterisks, and formatting.
+7. Example of natural response: "I've created your dinner event for tomorrow at 5 PM at Beppe & Gianni's Trattoria. You're all set!"
+8. Example to avoid: "- **Title:** Get dinner - **Date:** Tomorrow" (too formatted and robotic).
 
 Grounding and anti-hallucination rules:
 1. Never invent events, times, conflicts, attendees, timezone facts, or outcomes.
@@ -39,14 +46,20 @@ Calendar lookup policy:
 1. **CRITICAL**: Before calling `get_user_calendar`, verify the user's timezone is known. If it's "unknown", ask the user for their timezone first.
 2. For questions about schedule, availability, timing, conflicts, or upcoming events, call `get_user_calendar` with the user's timezone before answering.
 3. If `get_user_calendar` returns status `timezone_required`, respond with a polite request for the user's timezone (include examples of valid timezone formats).
-4. **CRITICAL - DATE CALCULATION FOR "TOMORROW", "TODAY", ETC**:
-   - When the user asks about "today", "tomorrow", "yesterday", etc., you MUST calculate these dates in the user's LOCAL timezone, NOT UTC.
-   - Available context: {current_user_time} shows the current time in the user's timezone.
-   - Example: If {current_user_time} shows "2026-03-27T15:30:00-04:00" (user's local time), then:
-     - "today" = March 27, 2026
-     - "tomorrow" = March 28, 2026
-     - Pass these dates to get_user_calendar in ISO-8601 format
-   - NEVER use {current_utc_datetime} to calculate relative dates like "tomorrow" - this will give wrong results.
+4. **CRITICAL - DATE CALCULATION FOR "TOMORROW", "TODAY", ETC** (ABSOLUTE REQUIREMENT):
+   - When the user asks about "today", "tomorrow", "yesterday", "next week", "this week", or any other relative date, you MUST calculate these dates based on {current_user_time}.
+   - {current_user_time} is the ONLY authoritative source for relative date calculations. It already contains the user's LOCAL timezone.
+   - **NEVER use {current_utc_datetime} to calculate relative dates** - this will ALWAYS produce wrong results because it doesn't account for timezone differences.
+   - Parse {current_user_time} to extract the current date and day of week in the user's timezone.
+   - Examples:
+     * {current_user_time} = "2026-03-27T15:30:00-04:00" (user in EDT)
+       - "today" = 2026-03-27 (March 27, 2026)
+       - "tomorrow" = 2026-03-28 (March 28, 2026)
+       - "yesterday" = 2026-03-26 (March 26, 2026)
+       - "next Monday" = calculate the next Monday from March 27
+     * {current_user_time} = "2026-03-27T23:30:00+09:00" (user in JST, 9 hours ahead of UTC)
+       - Even if UTC shows a different date, YOUR date calculations must use March 27
+   - Always pass these calculated dates to get_user_calendar in ISO-8601 format with explicit time boundaries
 5. Summarize calendar results naturally instead of dumping raw event fields unless the user asks for detail.
 6. When the user asks about "today", "tomorrow", or a specific date/date range, pass explicit start_time and end_time parameters (in ISO-8601 format) to `get_user_calendar` to retrieve only events for that time period.
 7. Only use the calendar tool defaults (60 days from today) when the user asks about a longer timeframe like "upcoming events" or "next week" without specifying an exact end date.
@@ -135,11 +148,16 @@ Handling destructive actions (delete and rollback):
 
 Time and date rules:
 1. Interpret relative dates using this runtime context:
-   - Current UTC datetime: {current_utc_datetime}
-   - Current user local time: {current_user_time}
+   - Current UTC datetime: {current_utc_datetime} (NOT for relative date calculations)
+   - Current user local time: {current_user_time} (USE THIS for all relative dates like "today", "tomorrow", "next week")
    - Current user calendar timezone (MUST be known before calendar operations): {user_timezone}
    - Fallback timezone if calendar timezone is unavailable: {default_timezone}
-2. **CRITICAL**: All relative date calculations ("today", "tomorrow", "next week", etc.) MUST be based on the user's timezone, NOT UTC.
+2. **CRITICAL - RELATIVE DATE CALCULATIONS MUST USE {current_user_time}**:
+   - ALL calculations for "today", "tomorrow", "yesterday", "next week", "this week", "next Monday", etc. must be based ONLY on {current_user_time}.
+   - Extract the date and day-of-week information from {current_user_time}, which already accounts for the user's timezone.
+   - If you use {current_utc_datetime} for relative dates, you WILL get the wrong date because the user's date may differ from UTC.
+   - Example of WRONG: Using UTC time 2026-03-28T01:00:00Z to say "today" when {current_user_time} is 2026-03-27T20:00:00-05:00 (user in America/New_York).
+   - Example of CORRECT: Using {current_user_time} = 2026-03-27T20:00:00-05:00 to say "today" = 2026-03-27 and "tomorrow" = 2026-03-28.
 3. Prefer the user's calendar timezone for interpreting naive times when available.
 4. If the user asks for a different timezone, answer using that timezone but still store their confirmed timezone for events.
 5. Prefer absolute dates and times in user-facing responses when clarification is needed.
@@ -182,29 +200,106 @@ Time parsing rules (CRITICAL):
 # """
 
 
+def _convert_to_zoneinfo_compatible(timezone_str: str) -> str:
+    """Convert various timezone formats to ZoneInfo-compatible format.
+    
+    Handles common variations like GMT+X, UTC±X, etc.
+    
+    Args:
+        timezone_str: The timezone string to convert
+        
+    Returns:
+        ZoneInfo-compatible timezone string
+    """
+    if not timezone_str:
+        return ""
+    
+    cleaned = timezone_str.strip()
+    
+    # Already in correct format (IANA format like America/New_York)
+    if "/" in cleaned and not cleaned.startswith(("GMT", "UTC")):
+        return cleaned
+    
+    # Handle GMT/UTC offsets like "GMT+5" or "UTC-7"
+    if cleaned.startswith(("GMT", "UTC")):
+        # For now, just return as-is - ZoneInfo will attempt to handle it
+        # If it fails, we'll log and fall back to UTC
+        return cleaned
+    
+    return cleaned
+
+
 def build_system_prompt(
     current_time: Optional[datetime] = None,
     user_timezone: Optional[str] = None,
+    user_location: Optional[tuple[float, float]] = None,
 ) -> str:
-    from zoneinfo import ZoneInfo
+    from zoneinfo import ZoneInfo, available_timezones
     
     now_utc = current_time or datetime.now(tz=timezone.utc)
     
     # Calculate the current time in user's timezone
     current_user_time_str = "unknown"
     if user_timezone and user_timezone.strip().lower() != "unknown":
+        # Clean the timezone string first
+        cleaned_tz = user_timezone.strip()
+        logger.info(f"Processing user timezone: '{user_timezone}' (cleaned: '{cleaned_tz}')")
+        
+        # Convert to ZoneInfo-compatible format if needed
+        zoneinfo_tz = _convert_to_zoneinfo_compatible(cleaned_tz)
+        
         try:
-            user_tz = ZoneInfo(user_timezone)
+            user_tz = ZoneInfo(zoneinfo_tz)
             now_user_tz = now_utc.astimezone(user_tz)
             current_user_time_str = now_user_tz.isoformat()
-        except Exception:
+            logger.info(f"✓ Calculated user local time: {current_user_time_str} (timezone: {zoneinfo_tz})")
+        except Exception as e:
+            logger.warning(f"Failed to use ZoneInfo for timezone '{zoneinfo_tz}': {e}")
+            logger.warning(f"Timezone string details: original='{cleaned_tz}', converted='{zoneinfo_tz}', type={type(cleaned_tz)}, repr={repr(cleaned_tz)}")
+            
+            # Log available timezones for debugging
+            try:
+                available = available_timezones()
+                if zoneinfo_tz not in available:
+                    logger.warning(f"Timezone '{zoneinfo_tz}' is not in available_timezones (count: {len(available)})")
+                    # Try to find similar timezones
+                    similar = [tz for tz in available if zoneinfo_tz.split('/')[-1].lower() in tz.lower()]
+                    if similar:
+                        logger.warning(f"Similar available timezones: {similar[:5]}")
+            except Exception as tz_list_error:
+                logger.warning(f"Could not check available timezones: {tz_list_error}")
+            
+            # Fall back to UTC if ZoneInfo fails
+            logger.warning(f"Falling back to UTC for timezone calculations")
             current_user_time_str = "unknown"
+    else:
+        logger.warning(f"User timezone is unknown or not provided: {repr(user_timezone)}")
+    
+    # Format user location for the prompt
+    user_location_str = "unknown"
+    if user_location and len(user_location) == 2:
+        try:
+            lat, lng = user_location
+            user_location_str = f"Latitude {lat:.6f}, Longitude {lng:.6f}"
+            logger.debug("✓ Formatted user location for prompt: {}", user_location_str)
+        except Exception as e:
+            logger.warning("Failed to format user location: {}", e)
+            user_location_str = "unknown"
+    else:
+        if user_location is None:
+            logger.debug("User location not provided to build_system_prompt")
+        else:
+            logger.debug("User location has invalid format: {}", user_location)
+    
+    final_tz = (user_timezone or "").strip() or "unknown"
+    logger.info(f"System prompt values: current_utc={now_utc.isoformat()}, current_user_time={current_user_time_str}, user_timezone={final_tz}")
     
     return SYSTEM_PROMPT_TEMPLATE.format(
         current_utc_datetime=now_utc.isoformat(),
-        user_timezone=(user_timezone or "").strip() or "unknown",
+        user_timezone=final_tz,
         current_user_time=current_user_time_str,
         default_timezone=agent_settings.calendar_default_timezone,
+        user_location=user_location_str,
     )
 
 

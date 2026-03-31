@@ -1,12 +1,23 @@
 from __future__ import annotations
 
+from typing import Optional
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+
+class UserLocation(BaseModel):
+    """User's geolocation coordinates from browser."""
+    latitude: float = Field(ge=-90, le=90, description="Latitude coordinate")
+    longitude: float = Field(ge=-180, le=180, description="Longitude coordinate")
+    accuracy: Optional[float] = Field(default=None, ge=0, description="Accuracy in meters")
+
+    model_config = ConfigDict(extra="forbid")
 
 
 class SendChatRequest(BaseModel):
     uid: str = Field(min_length=1, max_length=128)
     conversationId: str = Field(min_length=1, max_length=256)
     message: str = Field(min_length=1, max_length=4000)
+    userLocation: Optional[UserLocation] = Field(default=None, description="User's geolocation from browser")
 
     model_config = ConfigDict(extra="forbid")
 
