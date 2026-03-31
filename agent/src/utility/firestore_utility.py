@@ -164,32 +164,29 @@ def update_user_google_access_token(
 
 # Agent-Created Events Tracking
 # ==============================
-# Firestore schema for agent-created-events subcollection:
+# Firestore schema for event-managed-by-agent subcollection:
 # 
-# /users/{uid}/agent-created-events/{eventId}
+# /users/{uid}/event-managed-by-agent/{eventId}
 # {
 #   "googleEventId": "string",           # Google Calendar event ID
 #   "calendarId": "string",              # Calendar ID where event was created
 #   "createdAt": datetime,               # When agent created the event
-#   "metadata": {
-#     "summary": "string",               # Event title
-#     "start": "string",                 # ISO-8601 start time
-#     "end": "string",                   # ISO-8601 end time
-#     "timezone": "string",              # Event timezone
-#     "description": "string" (optional),
-#     "location": "string" (optional),
-#     "invitees": ["email1", "email2"] (optional)
-#   },
-#   "snapshot": {                        # Full original event data right after creation
+#   "status": "active" | "deleted",      # Event status (active or deleted)
+#   "snapshot": {                        # Full event data right after creation
 #     "id": "string",
 #     "summary": "string",
 #     "start": {...},
 #     "end": {...},
-#     ... (all Google Calendar event fields)
+#     "timezone": "string",
+#     "description": "string" (optional),
+#     "location": "string" (optional),
+#     "invitees": ["email1", "email2"] (optional),
+#     ... (all other Google Calendar event fields)
 #   },
 #   "previousSnapshot": {                # Previous state before last modification (for rollback)
-#     "snapshot": {...},
-#     "modifiedAt": datetime,
+#     "id": "string",
+#     "summary": "string",
+#     ... (all fields from snapshot)
 #   },
 #   "lastModifiedAt": datetime (optional)
 # }
@@ -201,18 +198,18 @@ class AgentCreatedEvent:
     google_event_id: str
     calendar_id: str
     created_at: datetime
-    metadata: dict
-    snapshot: dict
-    previous_snapshot: Optional[dict] = None
+    status: str  # "active" or "deleted"
+    snapshot: Optional[dict]  # current event state (None if deleted)
+    previous_snapshot: Optional[dict] = None  # state before last modification
     last_modified_at: Optional[datetime] = None
 
 
 def _agent_created_events_collection(uid: str):
-    """Get reference to user's agent-created-events subcollection."""
+    """Get reference to user's event-managed-by-agent subcollection."""
     return (
         firestore_db.collection("users")
         .document(uid)
-        .collection("agent-created-events")
+        .collection("event-managed-by-agent")
     )
 
 
@@ -221,7 +218,6 @@ def store_agent_created_event(
     uid: str,
     google_event_id: str,
     calendar_id: str,
-    metadata: dict,
     snapshot: dict,
 ) -> None:
     """
@@ -231,7 +227,6 @@ def store_agent_created_event(
         uid: User ID
         google_event_id: Google Calendar event ID
         calendar_id: Calendar ID where event was created
-        metadata: Event metadata (summary, start, end, timezone, description, location, invitees)
         snapshot: Full event data right after creation (for rollback)
     """
     cleaned_uid = uid.strip()
@@ -241,8 +236,8 @@ def store_agent_created_event(
     if not cleaned_uid or not cleaned_event_id or not cleaned_calendar_id:
         raise ValueError("uid, google_event_id, and calendar_id must not be empty")
     
-    if not isinstance(metadata, dict) or not isinstance(snapshot, dict):
-        raise ValueError("metadata and snapshot must be dictionaries")
+    if not isinstance(snapshot, dict):
+        raise ValueError("snapshot must be a dictionary")
     
     created_at = datetime.now(tz=timezone.utc)
     
@@ -251,9 +246,9 @@ def store_agent_created_event(
             "googleEventId": cleaned_event_id,
             "calendarId": cleaned_calendar_id,
             "createdAt": created_at,
-            "metadata": metadata,
+            "status": "active",
             "snapshot": snapshot,
-            "previousSnapshot": snapshot,  # Initialize with the same snapshot for first rollback
+            "previousSnapshot": None,  # No previous snapshot for new events
             "lastModifiedAt": None,
         },
         merge=False,
@@ -295,9 +290,9 @@ def get_agent_created_event(uid: str, google_event_id: str) -> Optional[AgentCre
         google_event_id=str(payload.get("googleEventId", "")),
         calendar_id=str(payload.get("calendarId", "")),
         created_at=_to_datetime(payload.get("createdAt")) or datetime.now(tz=timezone.utc),
-        metadata=payload.get("metadata", {}),
-        snapshot=payload.get("snapshot", {}),
-        previous_snapshot=payload.get("previousSnapshot", {}) or None,
+        status=str(payload.get("status", "active")),
+        snapshot=payload.get("snapshot"),
+        previous_snapshot=payload.get("previousSnapshot"),
         last_modified_at=_to_datetime(payload.get("lastModifiedAt")),
     )
 
@@ -324,9 +319,9 @@ def list_agent_created_events(uid: str) -> List[AgentCreatedEvent]:
             google_event_id=str(payload.get("googleEventId", "")),
             calendar_id=str(payload.get("calendarId", "")),
             created_at=_to_datetime(payload.get("createdAt")) or datetime.now(tz=timezone.utc),
-            metadata=payload.get("metadata", {}),
-            snapshot=payload.get("snapshot", {}),
-            previous_snapshot=payload.get("previousSnapshot", {}) or None,
+            status=str(payload.get("status", "active")),
+            snapshot=payload.get("snapshot"),
+            previous_snapshot=payload.get("previousSnapshot"),
             last_modified_at=_to_datetime(payload.get("lastModifiedAt")),
         )
         results.append(event)
@@ -338,18 +333,20 @@ def list_agent_created_events(uid: str) -> List[AgentCreatedEvent]:
 def update_agent_event_snapshot(
     uid: str,
     google_event_id: str,
-    current_snapshot: dict,
-    new_snapshot: dict,
+    current_snapshot: Optional[dict],
+    new_snapshot: Optional[dict],
+    status: str = "active",
 ) -> None:
     """
-    Update the snapshot of an agent-created event before modifying it.
+    Update the snapshot of an agent-created event.
     Saves the current snapshot as previousSnapshot for rollback.
     
     Args:
         uid: User ID
         google_event_id: Google Calendar event ID
         current_snapshot: The current event snapshot (will become previousSnapshot)
-        new_snapshot: The new event snapshot to store
+        new_snapshot: The new event snapshot to store (can be None if deleted)
+        status: Event status ("active" or "deleted")
     """
     cleaned_uid = uid.strip()
     cleaned_event_id = google_event_id.strip()
@@ -357,23 +354,25 @@ def update_agent_event_snapshot(
     if not cleaned_uid or not cleaned_event_id:
         raise ValueError("uid and google_event_id must not be empty")
     
-    if not isinstance(current_snapshot, dict) or not isinstance(new_snapshot, dict):
-        raise ValueError("Snapshots must be dictionaries")
+    if status not in ("active", "deleted"):
+        raise ValueError("status must be 'active' or 'deleted'")
     
     now = datetime.now(tz=timezone.utc)
     
     _agent_created_events_collection(cleaned_uid).document(cleaned_event_id).set(
         {
-            "previousSnapshot": current_snapshot,  # Store just the snapshot for consistency
+            "status": status,
+            "previousSnapshot": current_snapshot,
             "snapshot": new_snapshot,
             "lastModifiedAt": now,
         },
         merge=True,
     )
     logger.info(
-        "Updated snapshot for agent-created event: uid={}, eventId={}",
+        "Updated snapshot for agent-created event: uid={}, eventId={}, status={}",
         cleaned_uid,
         cleaned_event_id,
+        status,
     )
 
 

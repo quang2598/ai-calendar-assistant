@@ -5,7 +5,6 @@ from datetime import datetime, timedelta, timezone
 from typing import Callable, List, Optional, Tuple
 from zoneinfo import ZoneInfo
 
-import pytz
 from google.auth.transport.requests import Request as GoogleAuthRequest
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import Resource, build
@@ -70,12 +69,8 @@ def _validate_timezone_name(timezone_name: str) -> str:
         raise RuntimeError("Invalid timezone: empty value")
     try:
         ZoneInfo(cleaned)
-    except Exception:
-        # Fall back to pytz if ZoneInfo fails
-        try:
-            pytz.timezone(cleaned)
-        except Exception as exc:
-            raise RuntimeError(f"Invalid timezone: {cleaned}") from exc
+    except Exception as exc:
+        raise RuntimeError(f"Invalid timezone: {cleaned}") from exc
     return cleaned
 
 
@@ -83,16 +78,12 @@ def _resolve_timezone(timezone_name: str) -> ZoneInfo:
     target_timezone = _validate_timezone_name(timezone_name)
     try:
         return ZoneInfo(target_timezone)
-    except Exception:
-        # If ZoneInfo fails, try to use pytz
-        try:
-            return pytz.timezone(target_timezone)
-        except Exception as exc:
-            raise RuntimeError(f"Invalid timezone: {target_timezone}") from exc
+    except Exception as exc:
+        raise RuntimeError(f"Invalid timezone: {target_timezone}") from exc
 
 
 def _ensure_datetime_timezone(value: datetime, timezone_name: str) -> datetime:
-    """Attach timezone info to a datetime, correctly handling both ZoneInfo and pytz.
+    """Attach timezone info to a datetime using ZoneInfo.
     
     Args:
         value: The datetime (may be naive or aware)
@@ -104,13 +95,8 @@ def _ensure_datetime_timezone(value: datetime, timezone_name: str) -> datetime:
     target_timezone = _resolve_timezone(timezone_name)
     
     if value.tzinfo is None:
-        # Naive datetime - attach timezone
-        if isinstance(target_timezone, ZoneInfo):
-            # ZoneInfo: use replace() since ZoneInfo works correctly
-            return value.replace(tzinfo=target_timezone)
-        else:
-            # pytz: must use localize() to avoid time corruption
-            return target_timezone.localize(value)
+        # Naive datetime - attach timezone using replace()
+        return value.replace(tzinfo=target_timezone)
     else:
         # Aware datetime - convert to target timezone
         return value.astimezone(target_timezone)
@@ -703,7 +689,8 @@ def rollback_user_calendar_event(
 ) -> CalendarEvent:
     """
     Restore a calendar event to its previous state using a saved snapshot.
-    This is used for undoing modifications or recreating deleted events.
+    This is used for undoing modifications (Case 3 only).
+    For deleted events, use create_user_calendar_event instead.
     
     Args:
         uid: User ID
@@ -715,7 +702,7 @@ def rollback_user_calendar_event(
         CalendarEvent with the restored data
         
     Raises:
-        RuntimeError: If rollback fails
+        RuntimeError: If rollback fails or event doesn't exist
     """
     if not isinstance(previous_snapshot, dict) or not previous_snapshot:
         raise ValueError("previous_snapshot must be a non-empty dictionary")
@@ -726,24 +713,10 @@ def rollback_user_calendar_event(
     if not cleaned_event_id:
         raise ValueError("event_id must not be empty")
     
-    # Try to get the current event to see if it still exists
-    def get_operation(service: Resource) -> object:
-        return service.events().get(calendarId=resolved_calendar_id, eventId=cleaned_event_id).execute()
-    
-    event_exists = True
-    try:
-        _execute_with_auth_retry(uid=uid, operation=get_operation)
-    except HttpError as exc:
-        status_code = _http_error_status_code(exc)
-        if status_code == 404:
-            event_exists = False
-        else:
-            raise RuntimeError(f"Failed to check event status for rollback: {exc}") from exc
-    
     # Build update payload from snapshot
     update_payload = {}
-    if "summary" in previous_snapshot:
-        update_payload["summary"] = previous_snapshot.get("summary")
+    if "title" in previous_snapshot:
+        update_payload["summary"] = previous_snapshot.get("title")
     if "description" in previous_snapshot:
         update_payload["description"] = previous_snapshot.get("description")
     if "location" in previous_snapshot:
@@ -752,47 +725,34 @@ def rollback_user_calendar_event(
         update_payload["start"] = previous_snapshot.get("start")
     if "end" in previous_snapshot:
         update_payload["end"] = previous_snapshot.get("end")
-    if "attendees" in previous_snapshot:
-        update_payload["attendees"] = previous_snapshot.get("attendees")
+    if "invitees" in previous_snapshot:
+        invitees = previous_snapshot.get("invitees")
+        if invitees:
+            update_payload["attendees"] = [{"email": email} for email in invitees]
     
-    if not update_payload:
-        raise ValueError("previous_snapshot does not contain any valid event fields")
+    if not update_payload or "summary" not in update_payload:
+        raise ValueError("previous_snapshot does not contain required fields (title and start/end) for restoration")
     
-    if event_exists:
-        # Event exists, update it
-        def update_operation(service: Resource) -> object:
-            return (
-                service.events()
-                .update(
-                    calendarId=resolved_calendar_id,
-                    eventId=cleaned_event_id,
-                    body=update_payload,
-                )
-                .execute()
+    # Update the existing event to restore previous state
+    def update_operation(service: Resource) -> object:
+        return (
+            service.events()
+            .update(
+                calendarId=resolved_calendar_id,
+                eventId=cleaned_event_id,
+                body=update_payload,
             )
-        
-        try:
-            restored_event = _execute_with_auth_retry(uid=uid, operation=update_operation)
-        except HttpError as exc:
-            raise RuntimeError(f"Failed to restore calendar event {cleaned_event_id}: {exc}") from exc
-    else:
-        # Event was deleted, recreate it using the snapshot
-        # The snapshot should contain all necessary fields: summary, start, end, description, location, attendees
-        # Use update_payload which was built from the snapshot
-        def create_operation(service: Resource) -> object:
-            return (
-                service.events()
-                .insert(
-                    calendarId=resolved_calendar_id,
-                    body=update_payload,
-                )
-                .execute()
-            )
-        
-        try:
-            restored_event = _execute_with_auth_retry(uid=uid, operation=create_operation)
-        except HttpError as exc:
-            raise RuntimeError(f"Failed to restore deleted calendar event: {exc}") from exc
+            .execute()
+        )
+    
+    try:
+        restored_event = _execute_with_auth_retry(uid=uid, operation=update_operation)
+        logger.info(f"Restored calendar event by updating: {cleaned_event_id}")
+    except HttpError as exc:
+        status_code = _http_error_status_code(exc)
+        if status_code == 404:
+            raise RuntimeError(f"Cannot restore deleted event using rollback. Event {cleaned_event_id} no longer exists. Use create event instead.") from exc
+        raise RuntimeError(f"Failed to restore calendar event: {exc}") from exc
     
     logger.info("Rolled back calendar event: uid={}, eventId={}", uid, cleaned_event_id)
     return _map_calendar_event(restored_event or {})

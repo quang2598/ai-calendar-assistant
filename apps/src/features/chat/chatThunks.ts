@@ -9,6 +9,7 @@ import {
 import {
   ChatApiServiceError,
   sendMessageToServer,
+  UserLocation,
 } from "@/src/services/chat/chatApiService";
 import type { RootState } from "@/src/store";
 
@@ -24,6 +25,10 @@ import {
   sendingSucceeded,
   setActiveConversation,
 } from "./chatSlice";
+
+type SendComposerMessagePayload = {
+  userLocation?: UserLocation | null;
+};
 
 let conversationsUnsubscribe: (() => void) | null = null;
 let conversationsListeningUid: string | null = null;
@@ -81,46 +86,49 @@ export const startConversationsListener = createAsyncThunk<
   void,
   void,
   { rejectValue: string }
->("chat/startConversationsListener", async (_, { dispatch, rejectWithValue }) => {
-  const uid = getCurrentAuthUid();
-  if (!uid) {
-    const message = "User is not authenticated.";
-    dispatch(conversationsFailed(message));
-    return rejectWithValue(message);
-  }
+>(
+  "chat/startConversationsListener",
+  async (_, { dispatch, rejectWithValue }) => {
+    const uid = getCurrentAuthUid();
+    if (!uid) {
+      const message = "User is not authenticated.";
+      dispatch(conversationsFailed(message));
+      return rejectWithValue(message);
+    }
 
-  if (conversationsUnsubscribe && conversationsListeningUid === uid) {
-    return;
-  }
+    if (conversationsUnsubscribe && conversationsListeningUid === uid) {
+      return;
+    }
 
-  teardownConversationsListener();
-  conversationsListeningUid = uid;
-  const listenerToken = conversationsListenerToken;
-  dispatch(conversationsLoading());
-
-  try {
-    conversationsUnsubscribe = listenToConversations(
-      uid,
-      (conversations) => {
-        if (listenerToken !== conversationsListenerToken) {
-          return;
-        }
-        dispatch(conversationsReceived(conversations));
-      },
-      (error) => {
-        if (listenerToken !== conversationsListenerToken) {
-          return;
-        }
-        dispatch(conversationsFailed(normalizeFirestoreError(error)));
-      },
-    );
-  } catch (error) {
     teardownConversationsListener();
-    const message = normalizeFirestoreError(error);
-    dispatch(conversationsFailed(message));
-    return rejectWithValue(message);
-  }
-});
+    conversationsListeningUid = uid;
+    const listenerToken = conversationsListenerToken;
+    dispatch(conversationsLoading());
+
+    try {
+      conversationsUnsubscribe = listenToConversations(
+        uid,
+        (conversations) => {
+          if (listenerToken !== conversationsListenerToken) {
+            return;
+          }
+          dispatch(conversationsReceived(conversations));
+        },
+        (error) => {
+          if (listenerToken !== conversationsListenerToken) {
+            return;
+          }
+          dispatch(conversationsFailed(normalizeFirestoreError(error)));
+        },
+      );
+    } catch (error) {
+      teardownConversationsListener();
+      const message = normalizeFirestoreError(error);
+      dispatch(conversationsFailed(message));
+      return rejectWithValue(message);
+    }
+  },
+);
 
 export const startMessagesListener = createAsyncThunk<
   void,
@@ -198,53 +206,71 @@ export const stopMessagesListener = createAsyncThunk(
 
 export const sendComposerMessage = createAsyncThunk<
   void,
-  void,
+  SendComposerMessagePayload,
   { state: RootState; rejectValue: string }
->("chat/sendComposerMessage", async (_, { dispatch, getState, rejectWithValue }) => {
-  const state = getState();
-  if (state.chat.sendingStatus === "loading") {
-    return;
-  }
-
-  const message = state.chat.composerText.trim();
-  const conversationId = state.chat.activeConversationId;
-  const uid = getCurrentAuthUid();
-
-  if (!message) {
-    const error = "Message cannot be empty.";
-    dispatch(sendingFailed(error));
-    return rejectWithValue(error);
-  }
-
-  if (!uid) {
-    const error = "User is not authenticated.";
-    dispatch(sendingFailed(error));
-    return rejectWithValue(error);
-  }
-
-  dispatch(sendingStarted({ conversationId, messageText: message }));
-
-  try {
-    const data = await sendMessageToServer({
-      conversationId,
-      message,
-    });
-
-    const currentActiveConversationId = getState().chat.activeConversationId;
-    if (currentActiveConversationId !== data.conversationId) {
-      dispatch(setActiveConversation(data.conversationId));
+>(
+  "chat/sendComposerMessage",
+  async ({ userLocation }, { dispatch, getState, rejectWithValue }) => {
+    console.log(
+      "%c[DEBUG] sendComposerMessage thunk - received userLocation:",
+      "color: orange; font-weight: bold;",
+      userLocation,
+    );
+    const state = getState();
+    if (state.chat.sendingStatus === "loading") {
+      return;
     }
 
-    await dispatch(
-      startMessagesListener({
-        conversationId: data.conversationId,
-      }),
-    );
+    const message = state.chat.composerText.trim();
+    const conversationId = state.chat.activeConversationId;
+    const uid = getCurrentAuthUid();
 
-    dispatch(sendingSucceeded());
-  } catch (error) {
-    const errorMessage = normalizeChatApiError(error);
-    dispatch(sendingFailed(errorMessage));
-    return rejectWithValue(errorMessage);
-  }
-});
+    if (!message) {
+      const error = "Message cannot be empty.";
+      dispatch(sendingFailed(error));
+      return rejectWithValue(error);
+    }
+
+    if (!uid) {
+      const error = "User is not authenticated.";
+      dispatch(sendingFailed(error));
+      return rejectWithValue(error);
+    }
+
+    dispatch(sendingStarted({ conversationId, messageText: message }));
+
+    try {
+      console.log(
+        "%c[DEBUG] Sending to server with payload:",
+        "color: orange; font-weight: bold;",
+        {
+          conversationId,
+          message,
+          userLocation: userLocation || null,
+        },
+      );
+      const data = await sendMessageToServer({
+        conversationId,
+        message,
+        userLocation: userLocation || null,
+      });
+
+      const currentActiveConversationId = getState().chat.activeConversationId;
+      if (currentActiveConversationId !== data.conversationId) {
+        dispatch(setActiveConversation(data.conversationId));
+      }
+
+      await dispatch(
+        startMessagesListener({
+          conversationId: data.conversationId,
+        }),
+      );
+
+      dispatch(sendingSucceeded());
+    } catch (error) {
+      const errorMessage = normalizeChatApiError(error);
+      dispatch(sendingFailed(errorMessage));
+      return rejectWithValue(errorMessage);
+    }
+  },
+);

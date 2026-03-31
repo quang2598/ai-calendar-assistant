@@ -6,6 +6,7 @@ from typing import List, Optional
 from zoneinfo import ZoneInfo
 
 from langchain.tools import tool
+from loguru import logger
 from pydantic import BaseModel, ConfigDict, Field
 
 from config import trace_span
@@ -18,12 +19,15 @@ from utility.google_calendar_utility import (
     rollback_user_calendar_event,
     get_user_calendar_timezone,
     list_user_calendar_events,
+    build_user_google_credentials,
+    _resolve_calendar_id,
 )
 from utility.firestore_utility import (
     get_agent_created_event,
     list_agent_created_events,
     update_agent_event_snapshot,
     store_agent_created_event,
+    delete_agent_created_event_record,
 )
 
 
@@ -258,11 +262,13 @@ def _format_event_time_for_response(iso_datetime_str: str, timezone_name: Option
 def _verify_agent_created_event(uid: str, event_id: str) -> bool:
     """Verify that an event was created by the agent.
     
-    Returns True if the event exists in the agent-created-events collection,
+    Returns True if the event exists in the event-managed-by-agent collection,
     False otherwise.
     """
     agent_event = get_agent_created_event(uid=uid, google_event_id=event_id)
-    return agent_event is not None
+    found = agent_event is not None
+    logger.info(f"Verify agent created event: uid={uid}, event_id={event_id}, found={found}")
+    return found
 
 
 @trace_span("tool_get_user_calendar")
@@ -488,26 +494,12 @@ def _add_event_to_calendar_with_tracking_impl(
         
         if event_id:
             try:
-                # Prepare metadata
-                metadata = {
-                    "summary": event_data.get("title", ""),
-                    "start": event_data.get("start", ""),
-                    "end": event_data.get("end", ""),
-                    "timezone": timezone or result.get("timezone_used", ""),
-                }
-                if event_data.get("description"):
-                    metadata["description"] = event_data["description"]
-                if event_data.get("location"):
-                    metadata["location"] = event_data["location"]
-                if event_data.get("invitees"):
-                    metadata["invitees"] = event_data["invitees"]
-                
-                # Store in Firestore
+                # Store the simple event snapshot in Firestore
+                # This keeps the stored data clean and readable
                 store_agent_created_event(
                     uid=uid,
                     google_event_id=event_id,
                     calendar_id=calendar_id or "primary",
-                    metadata=metadata,
                     snapshot=event_data,
                 )
             except Exception as exc:
@@ -586,7 +578,7 @@ def _modify_event_impl(
                 current_snapshot=current_snapshot,
                 new_snapshot={
                     "id": modified_event.event_id,
-                    "summary": modified_event.title,
+                    "title": modified_event.title,
                     "start": modified_event.start,
                     "end": modified_event.end,
                     "status": modified_event.status,
@@ -691,13 +683,14 @@ def _delete_event_impl(
             # If verification fails, log it but don't fail the deletion
             pass
         
-        # Update snapshot to save for rollback
-        if agent_event and current_snapshot:
+        # Update snapshot: save current state as previous, set current to null, mark as deleted
+        if agent_event:
             update_agent_event_snapshot(
                 uid=uid,
                 google_event_id=event_id.strip(),
                 current_snapshot=current_snapshot,
-                new_snapshot=current_snapshot,  # Keep snapshot same, just mark as deleted
+                new_snapshot=None,  # Current snapshot is null for deleted events
+                status="deleted",
             )
     except RuntimeError as exc:
         return _json_tool_response(
@@ -733,9 +726,12 @@ def _rollback_event_impl(
     
     # Verify event was created by agent
     if not _verify_agent_created_event(uid=uid, event_id=event_id.strip()):
+        error_msg = "I can only rollback events that I previously created."
+        logger.warning(f"Rollback denied: event_id={event_id.strip()}, uid={uid}, reason=event_not_found")
+        logger.info(f"Agent response: {error_msg}")
         return _json_tool_response(
             status="unauthorized",
-            message="I can only rollback events that I previously created.",
+            message=error_msg,
         )
     
     try:
@@ -747,41 +743,136 @@ def _rollback_event_impl(
                 message=f"Event {event_id.strip()} not found in agent-created events.",
             )
         
-        # Check if there's a previous snapshot to rollback to
-        if not agent_event.previous_snapshot:
-            return _json_tool_response(
-                status="no_history",
-                message="No modification history available for this event. Cannot rollback.",
-            )
+        # Case 1: previous_snapshot is null (event just created) - delete the event
+        if agent_event.previous_snapshot is None:
+            logger.info(f"Rollback case 1: event just created, deleting event_id={event_id.strip()}")
+            try:
+                delete_user_calendar_event(
+                    uid=uid,
+                    event_id=event_id.strip(),
+                    calendar_id=calendar_id,
+                )
+                # Update firestore: mark as deleted
+                update_agent_event_snapshot(
+                    uid=uid,
+                    google_event_id=event_id.strip(),
+                    current_snapshot=agent_event.snapshot,
+                    new_snapshot=None,
+                    status="deleted",
+                )
+                success_msg = f"Rollback completed: Calendar event {event_id.strip()} (which was just created) has been deleted."
+                logger.info(f"Agent response: {success_msg}")
+                return _json_tool_response(
+                    status="success",
+                    message=success_msg,
+                )
+            except Exception as exc:
+                raise RuntimeError(f"Failed to delete event during rollback: {exc}") from exc
         
-        previous_snapshot = agent_event.previous_snapshot
-        current_snapshot = agent_event.snapshot
+        # Case 2: current_snapshot is null (event was deleted) - recreate with different ID using previous snapshot
+        elif agent_event.snapshot is None:
+            logger.info(f"Rollback case 2: event was deleted, recreating with new ID using previous snapshot, original_id={event_id.strip()}")
+            try:
+                # Build the create request from previous snapshot
+                previous = agent_event.previous_snapshot
+                
+                # Parse datetime strings from snapshot
+                from datetime import datetime
+                start_time = datetime.fromisoformat(previous.get("start")) if previous.get("start") else None
+                end_time = datetime.fromisoformat(previous.get("end")) if previous.get("end") else None
+                
+                if not start_time or not end_time:
+                    raise ValueError("Cannot recreate event: start and end times are required")
+                
+                create_request = CreateCalendarEventRequest(
+                    title=previous.get("title", "Restored Event"),
+                    start_time=start_time,
+                    end_time=end_time,
+                    description=previous.get("description"),
+                    location=previous.get("location"),
+                    invitees=previous.get("invitees"),
+                    calendar_id=calendar_id,
+                )
+                
+                restored_event = create_user_calendar_event(
+                    uid=uid,
+                    request=create_request,
+                )
+                
+                # Store the new event as a separate record in Firestore (don't modify the old deleted event)
+                store_agent_created_event(
+                    uid=uid,
+                    google_event_id=restored_event.event_id,
+                    calendar_id=calendar_id or "primary",
+                    snapshot={
+                        "id": restored_event.event_id,
+                        "title": restored_event.title,
+                        "start": restored_event.start,
+                        "end": restored_event.end,
+                        "status": restored_event.status,
+                        "description": restored_event.description,
+                        "location": restored_event.location,
+                        "invitees": restored_event.invitees,
+                    },
+                )
+                
+                success_msg = f"Rollback completed: Deleted calendar event has been restored (with a new event ID). Original ID was {event_id.strip()}, new ID is {restored_event.event_id}."
+                logger.info(f"Agent response: {success_msg}")
+                return _json_tool_response(
+                    status="success",
+                    message=success_msg,
+                    event={
+                        "id": restored_event.event_id,
+                        "title": restored_event.title,
+                        "start": restored_event.start,
+                        "end": restored_event.end,
+                        "status": restored_event.status,
+                        "location": restored_event.location,
+                        "description": restored_event.description,
+                        "invitees": restored_event.invitees,
+                        "htmlLink": restored_event.html_link,
+                    },
+                )
+            except Exception as exc:
+                raise RuntimeError(f"Failed to restore deleted event: {exc}") from exc
         
-        # Perform the rollback
-        restored_event = rollback_user_calendar_event(
-            uid=uid,
-            event_id=event_id.strip(),
-            previous_snapshot=previous_snapshot,
-            calendar_id=calendar_id,
-        )
-        
-        # Update snapshot: current becomes previous, previous becomes current
-        update_agent_event_snapshot(
-            uid=uid,
-            google_event_id=event_id.strip(),
-            current_snapshot=current_snapshot,
-            new_snapshot={
-                "id": restored_event.event_id,
-                "summary": restored_event.title,
-                "start": restored_event.start,
-                "end": restored_event.end,
-                "status": restored_event.status,
-                "description": restored_event.description,
-                "location": restored_event.location,
-                "invitees": restored_event.invitees,
-                "htmlLink": restored_event.html_link,
-            },
-        )
+        # Case 3: both snapshots exist (event was updated) - update with previous snapshot, keep same ID
+        else:
+            logger.info(f"Rollback case 3: event was updated, restoring to previous state with same ID, event_id={event_id.strip()}")
+            try:
+                restored_event = rollback_user_calendar_event(
+                    uid=uid,
+                    event_id=event_id.strip(),
+                    previous_snapshot=agent_event.previous_snapshot,
+                    calendar_id=calendar_id,
+                )
+                # Update firestore: swap the snapshots
+                update_agent_event_snapshot(
+                    uid=uid,
+                    google_event_id=event_id.strip(),
+                    current_snapshot=agent_event.previous_snapshot,
+                    new_snapshot=agent_event.snapshot,
+                    status="active",
+                )
+                success_msg = f"Rollback completed: Calendar event {event_id.strip()} has been restored to its previous state."
+                logger.info(f"Agent response: {success_msg}")
+                return _json_tool_response(
+                    status="success",
+                    message=success_msg,
+                    event={
+                        "id": restored_event.event_id,
+                        "title": restored_event.title,
+                        "start": restored_event.start,
+                        "end": restored_event.end,
+                        "status": restored_event.status,
+                        "location": restored_event.location,
+                        "description": restored_event.description,
+                        "invitees": restored_event.invitees,
+                        "htmlLink": restored_event.html_link,
+                    },
+                )
+            except Exception as exc:
+                raise RuntimeError(f"Failed to restore event: {exc}") from exc
     except RuntimeError as exc:
         return _json_tool_response(
             status="error",
@@ -834,18 +925,30 @@ def _list_agent_events_impl(uid: str) -> str:
             event_count=0,
         )
     
-    events = [
-        {
+    events = []
+    for event in agent_events:
+        # For active events, use the current snapshot
+        if event.snapshot is not None:
+            snapshot_to_use = event.snapshot
+        # For deleted events, use the previous snapshot so agent can see and restore them
+        elif event.status == "deleted" and event.previous_snapshot is not None:
+            logger.info(f"Including deleted event in list: event_id={event.google_event_id}, uid={uid}")
+            snapshot_to_use = event.previous_snapshot
+        else:
+            # Skip events with no usable snapshot
+            logger.info(f"Skipping event with no snapshot: event_id={event.google_event_id}, uid={uid}, status={event.status}")
+            continue
+        
+        events.append({
             "id": event.google_event_id,
-            "title": event.snapshot.get("summary", "(untitled)"),
-            "start": event.snapshot.get("start", ""),
-            "end": event.snapshot.get("end", ""),
+            "title": snapshot_to_use.get("title", "(untitled)"),
+            "start": snapshot_to_use.get("start", ""),
+            "end": snapshot_to_use.get("end", ""),
             "calendar": event.calendar_id,
             "created_at": event.created_at.isoformat() if event.created_at else "",
             "last_modified_at": event.last_modified_at.isoformat() if event.last_modified_at else None,
-        }
-        for event in agent_events
-    ]
+            "status": event.status,  # Include status so agent knows if it's deleted
+        })
     
     return _json_tool_response(
         status="success",

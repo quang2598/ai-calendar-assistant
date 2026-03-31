@@ -2,6 +2,11 @@ export type AgentChatRequest = {
   uid: string;
   conversationId: string;
   message: string;
+  userLocation?: {
+    latitude: number;
+    longitude: number;
+    accuracy?: number;
+  } | null;
 };
 
 export type AgentChatResponse = {
@@ -98,7 +103,9 @@ export async function requestAgentChatResponse(
     }
 
     const code =
-      typeof body?.error?.code === "string" ? body.error.code : "AGENT_CHAT_REQUEST_FAILED";
+      typeof body?.error?.code === "string"
+        ? body.error.code
+        : "AGENT_CHAT_REQUEST_FAILED";
     const message =
       typeof body?.error?.message === "string"
         ? body.error.message
