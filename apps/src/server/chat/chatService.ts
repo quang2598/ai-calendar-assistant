@@ -280,9 +280,17 @@ async function resolveAgentResponseText(params: {
     longitude: number;
     accuracy?: number;
   } | null;
+  userToken: string;
 }): Promise<string> {
   try {
-    const agentResponse = await requestAgentChatResponse(params);
+    const agentResponse = await requestAgentChatResponse(
+      {
+        conversationId: params.conversationId,
+        message: params.message,
+        userLocation: params.userLocation,
+      },
+      params.userToken,
+    );
     return agentResponse.responseMessage.text;
   } catch {
     // Catch ALL errors (network failures, agent errors, etc.)
@@ -294,9 +302,11 @@ async function resolveAgentResponseText(params: {
 export async function processBackendChatRequest(
   request: BackendChatRequest,
   idToken: string,
+  uid: string,
+  userToken: string,
 ): Promise<BackendChatResponse> {
   try {
-    const auth = getBackendAuthContextByUid(request.uid);
+    const auth = getBackendAuthContextByUid(uid);
     const text = request.message.trim();
 
     if (!text) {
@@ -326,6 +336,7 @@ export async function processBackendChatRequest(
       conversationId,
       message: text,
       userLocation: request.userLocation || null,
+      userToken,
     });
 
     const responseMessageId = await saveMessage({

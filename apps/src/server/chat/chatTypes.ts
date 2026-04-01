@@ -9,7 +9,6 @@ export type UserLocation = {
 };
 
 export type BackendChatRequest = {
-  uid: string;
   conversationId: string | null;
   message: string;
   userLocation?: UserLocation | null;

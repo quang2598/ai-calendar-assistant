@@ -43,14 +43,13 @@ class UserLocation(BaseModel):
 
 
 class SendChatRequest(BaseModel):
-    uid: str = Field(min_length=1, max_length=128)
     conversationId: str = Field(min_length=1, max_length=256)
     message: str = Field(min_length=1, max_length=4000)
     userLocation: Optional[UserLocation] = Field(default=None, description="User's geolocation from browser")
 
     model_config = ConfigDict(extra="forbid")
 
-    @field_validator("uid", "message")
+    @field_validator("message")
     @classmethod
     def strip_required_fields(cls, value: str) -> str:
         cleaned = value.strip()
