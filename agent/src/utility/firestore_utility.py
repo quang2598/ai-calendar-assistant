@@ -397,3 +397,265 @@ def delete_agent_created_event_record(uid: str, google_event_id: str) -> None:
         cleaned_uid,
         cleaned_event_id,
     )
+
+
+# Action History Tracking
+# =======================
+# Firestore schema for action-history subcollection:
+#
+# /users/{uid}/action-history/{actionId}
+# {
+#   "actionType": "add" | "update" | "delete",  # Type of action performed
+#   "alreadyRolledBack": boolean,                # Whether action has been rolled back
+#   "createdAt": datetime,                       # When the action was taken
+#   "eventId": "string",                         # Google Calendar event ID
+#   "eventTitle": "string",                      # Event title at time of action
+# }
+
+
+@dataclass(frozen=True)
+class ActionHistoryRecord:
+    """Represents a single action (create/update/delete) taken by the agent."""
+    action_type: str  # "add", "update", or "delete"
+    already_rolled_back: bool
+    created_at: datetime
+    event_id: str
+    event_title: str
+    description: Optional[str] = None  # Short summary of changes
+
+
+def _action_history_collection(uid: str):
+    """Get reference to user's action-history subcollection."""
+    return (
+        firestore_db.collection("users")
+        .document(uid)
+        .collection("action-history")
+    )
+
+
+@trace_span("store_action_history")
+def store_action_history(
+    uid: str,
+    action_type: str,
+    event_id: str,
+    event_title: str,
+    already_rolled_back: bool = False,
+    description: Optional[str] = None,
+) -> str:
+    """
+    Store a record of an action (create/update/delete) in Firestore.
+    
+    Args:
+        uid: User ID
+        action_type: Type of action ("add", "update", or "delete")
+        event_id: Google Calendar event ID
+        event_title: Event title at the time of the action
+        already_rolled_back: Whether this action has been rolled back
+        description: Short summary of what was changed
+        
+    Returns:
+        The document ID of the created action history record
+    """
+    cleaned_uid = uid.strip()
+    cleaned_action_type = action_type.strip().lower()
+    cleaned_event_id = event_id.strip()
+    cleaned_title = event_title.strip()
+    cleaned_description = description.strip() if description else None
+    
+    if not cleaned_uid or not cleaned_event_id or not cleaned_title:
+        raise ValueError("uid, event_id, and event_title must not be empty")
+    
+    if cleaned_action_type not in ("add", "update", "delete"):
+        raise ValueError("action_type must be 'add', 'update', or 'delete'")
+    
+    created_at = datetime.now(tz=timezone.utc)
+    
+    # Use auto-generated document ID
+    doc_ref = _action_history_collection(cleaned_uid).document()
+    doc_ref.set(
+        {
+            "actionType": cleaned_action_type,
+            "alreadyRolledBack": already_rolled_back,
+            "createdAt": created_at,
+            "eventId": cleaned_event_id,
+            "eventTitle": cleaned_title,
+            "description": cleaned_description,
+        },
+        merge=False,
+    )
+    logger.info(
+        "Stored action history record: uid={}, actionType={}, eventId={}, eventTitle={}, description={}",
+        cleaned_uid,
+        cleaned_action_type,
+        cleaned_event_id,
+        cleaned_title,
+        cleaned_description,
+    )
+    return doc_ref.id
+
+
+@trace_span("get_action_history_by_event")
+def get_action_history_by_event(uid: str, event_id: str) -> List[ActionHistoryRecord]:
+    """
+    Get all action history records for a specific event.
+    
+    Args:
+        uid: User ID
+        event_id: Google Calendar event ID
+        
+    Returns:
+        List of ActionHistoryRecord for the event, ordered by createdAt
+    """
+    cleaned_uid = uid.strip()
+    cleaned_event_id = event_id.strip()
+    
+    if not cleaned_uid or not cleaned_event_id:
+        return []
+    
+    # Query without order_by to avoid requiring composite index
+    # We'll do client-side sorting instead
+    query = _action_history_collection(cleaned_uid).where("eventId", "==", cleaned_event_id)
+    
+    results: List[ActionHistoryRecord] = []
+    for doc in query.stream():
+        payload = doc.to_dict() or {}
+        record = ActionHistoryRecord(
+            action_type=str(payload.get("actionType", "")).strip(),
+            already_rolled_back=bool(payload.get("alreadyRolledBack", False)),
+            created_at=_to_datetime(payload.get("createdAt")) or datetime.now(tz=timezone.utc),
+            event_id=str(payload.get("eventId", "")).strip(),
+            event_title=str(payload.get("eventTitle", "")).strip(),
+            description=payload.get("description"),
+        )
+        results.append(record)
+    
+    # Sort by createdAt in ascending order (client-side)
+    results.sort(key=lambda r: r.created_at)
+    
+    return results
+
+
+@trace_span("list_all_action_history")
+def list_all_action_history(uid: str) -> List[ActionHistoryRecord]:
+    """
+    Get all action history records for a user.
+    
+    Args:
+        uid: User ID
+        
+    Returns:
+        List of all ActionHistoryRecord for the user, ordered by createdAt descending
+    """
+    cleaned_uid = uid.strip()
+    if not cleaned_uid:
+        return []
+    
+    query = (
+        _action_history_collection(cleaned_uid)
+        .order_by("createdAt", direction="DESCENDING")
+    )
+    
+    results: List[ActionHistoryRecord] = []
+    for doc in query.stream():
+        payload = doc.to_dict() or {}
+        record = ActionHistoryRecord(
+            action_type=str(payload.get("actionType", "")).strip(),
+            already_rolled_back=bool(payload.get("alreadyRolledBack", False)),
+            created_at=_to_datetime(payload.get("createdAt")) or datetime.now(tz=timezone.utc),
+            event_id=str(payload.get("eventId", "")).strip(),
+            event_title=str(payload.get("eventTitle", "")).strip(),
+            description=payload.get("description"),
+        )
+        results.append(record)
+    
+    return results
+
+
+@trace_span("get_latest_action")
+def get_latest_action(uid: str) -> Optional[ActionHistoryRecord]:
+    """
+    Get the most recent action for a user.
+    
+    Args:
+        uid: User ID
+        
+    Returns:
+        The latest ActionHistoryRecord for the user, or None if no actions exist
+    """
+    cleaned_uid = uid.strip()
+    if not cleaned_uid:
+        return None
+    
+    # Get all actions and take the first one (they're ordered descending by createdAt)
+    actions = list_all_action_history(cleaned_uid)
+    
+    if not actions:
+        return None
+    
+    return actions[0]  # Most recent action
+
+
+@trace_span("mark_action_as_rolled_back")
+def mark_action_as_rolled_back(uid: str, event_id: str) -> None:
+    """
+    Mark the most recent action for an event as rolled back.
+    
+    Args:
+        uid: User ID
+        event_id: Google Calendar event ID
+    """
+    cleaned_uid = uid.strip()
+    cleaned_event_id = event_id.strip()
+    
+    if not cleaned_uid or not cleaned_event_id:
+        raise ValueError("uid and event_id must not be empty")
+    
+    # Get all actions for this event and mark the most recent one
+    actions = get_action_history_by_event(cleaned_uid, cleaned_event_id)
+    
+    if not actions:
+        logger.warning(
+            "No action history found to mark as rolled back: uid={}, eventId={}",
+            cleaned_uid,
+            cleaned_event_id,
+        )
+        return
+    
+    # Mark the most recent action (last one, since ordered by createdAt ascending)
+    most_recent = actions[-1]
+    
+    # Find and update the document with the most recent timestamp (highest createdAt)
+    # Instead of using a filtered/ordered query (which requires a composite index),
+    # iterate through all action documents and find the one with the latest timestamp
+    query = _action_history_collection(cleaned_uid).where("eventId", "==", cleaned_event_id)
+    
+    most_recent_doc = None
+    most_recent_timestamp = None
+    
+    for doc in query.stream():
+        doc_data = doc.to_dict() or {}
+        doc_created_at = doc_data.get("createdAt")
+        
+        # Track the document with the maximum (most recent) timestamp
+        if doc_created_at is not None:
+            if most_recent_timestamp is None or doc_created_at > most_recent_timestamp:
+                most_recent_timestamp = doc_created_at
+                most_recent_doc = doc
+    
+    # Update the most recent document
+    if most_recent_doc:
+        most_recent_doc.reference.update({"alreadyRolledBack": True})
+        logger.info(
+            "Marked action as rolled back: uid={}, eventId={}, actionType={}, timestamp={}",
+            cleaned_uid,
+            cleaned_event_id,
+            most_recent.action_type,
+            most_recent_timestamp,
+        )
+    else:
+        logger.warning(
+            "Could not find action document to mark as rolled back: uid={}, eventId={}",
+            cleaned_uid,
+            cleaned_event_id,
+        )
+

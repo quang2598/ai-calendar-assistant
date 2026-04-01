@@ -1,7 +1,9 @@
+import os
 from utility import setup_logging
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 from config import firestore_db
 from agent import agent_settings, run_calendar_agent_turn
@@ -9,6 +11,25 @@ from dto import SendChatRequest, SendChatResponse
 
 
 app = FastAPI()
+
+# Configure CORS policy
+allowed_origins = [
+    "http://localhost:3000",
+    "http://localhost:8000",
+]
+
+# Add vercel app URL if configured
+vercel_app_url = os.getenv("VERCEL_APP_URL", "").strip()
+if vercel_app_url:
+    allowed_origins.append(vercel_app_url)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=allowed_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 def _map_runtime_error_to_http(exc: RuntimeError) -> HTTPException:
