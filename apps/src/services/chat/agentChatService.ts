@@ -1,5 +1,4 @@
 export type AgentChatRequest = {
-  uid: string;
   conversationId: string;
   message: string;
   userLocation?: {
@@ -83,11 +82,13 @@ function parseAgentChatResponse(data: unknown): AgentChatResponse {
 
 export async function requestAgentChatResponse(
   payload: AgentChatRequest,
+  userToken: string,
 ): Promise<AgentChatResponse> {
   const response = await fetch(getAgentChatUrl(), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
+      "X-User-Token": userToken,
     },
     cache: "no-store",
     body: JSON.stringify(payload),

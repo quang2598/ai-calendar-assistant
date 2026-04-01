@@ -176,9 +176,9 @@ def invoke_calendar_agent(
 
 
 @trace_span("run_calendar_agent_turn")
-def run_calendar_agent_turn(payload: SendChatRequest) -> SendChatResponse:
+def run_calendar_agent_turn(payload: SendChatRequest, uid: str) -> SendChatResponse:
     history = load_agent_history_messages(
-        uid=payload.uid,
+        uid=uid,
         conversation_id=payload.conversationId,
         latest_user_message=payload.message,
     )
@@ -198,7 +198,7 @@ def run_calendar_agent_turn(payload: SendChatRequest) -> SendChatResponse:
     # This is the primary source of truth for user's timezone
     user_timezone = None
     try:
-        user_timezone = get_user_calendar_timezone(uid=payload.uid)
+        user_timezone = get_user_calendar_timezone(uid=uid)
         if user_timezone and user_timezone.strip().lower() != "unknown":
             logger.info("Retrieved user timezone from Google Calendar: {}", user_timezone)
     except Exception as exc:
@@ -223,7 +223,7 @@ def run_calendar_agent_turn(payload: SendChatRequest) -> SendChatResponse:
         user_timezone = agent_settings.calendar_default_timezone
         logger.info("User timezone not explicitly set; will use fallback and may prompt user: {}", user_timezone)
     output_text = invoke_calendar_agent(
-        uid=payload.uid,
+        uid=uid,
         user_timezone=user_timezone,
         user_message=payload.message,
         chat_history=langchain_history,

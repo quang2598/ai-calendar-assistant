@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { verifyFirebaseIdToken } from "@/src/lib/firebaseAdmin";
+import { generateUserToken } from "@/src/lib/jwtUtils";
 import {
   BackendChatError,
   processBackendChatRequest,
@@ -44,7 +45,7 @@ async function parseJsonBody(request: NextRequest): Promise<ChatRequestBody> {
   }
 }
 
-function parseBody(body: ChatRequestBody): Omit<BackendChatRequest, "uid"> {
+function parseBody(body: ChatRequestBody) {
   const message = typeof body.message === "string" ? body.message : "";
 
   let conversationId: string | null;
@@ -64,7 +65,11 @@ function parseBody(body: ChatRequestBody): Omit<BackendChatRequest, "uid"> {
   }
 
   // Parse userLocation if provided
-  let userLocation: UserLocation | null = null;
+  let userLocation: {
+    latitude: number;
+    longitude: number;
+    accuracy?: number;
+  } | null = null;
   if (body.userLocation && typeof body.userLocation === "object") {
     const loc = body.userLocation as Record<string, unknown>;
     if (
@@ -114,13 +119,21 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const idToken = parseBearerToken(request);
     const decoded = await verifyFirebaseIdToken(idToken);
     const parsedBody = parseBody(body);
+
+    // Generate JWT token for the agent to verify the user
+    const userToken = generateUserToken(decoded.uid);
+
     const payload: BackendChatRequest = {
-      uid: decoded.uid,
       conversationId: parsedBody.conversationId,
       message: parsedBody.message,
       userLocation: parsedBody.userLocation,
     };
-    const data = await processBackendChatRequest(payload, idToken);
+    const data = await processBackendChatRequest(
+      payload,
+      idToken,
+      decoded.uid,
+      userToken,
+    );
 
     return NextResponse.json({ data }, { status: 200 });
   } catch (error) {
