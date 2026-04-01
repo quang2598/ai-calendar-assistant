@@ -9,7 +9,7 @@ from langchain.tools import tool
 from loguru import logger
 from pydantic import BaseModel, ConfigDict, Field
 
-from config import trace_span
+from config import trace_span, track_action
 from utility.google_calendar_utility import (
     CreateCalendarEventRequest,
     ModifyCalendarEventRequest,
@@ -28,7 +28,11 @@ from utility.firestore_utility import (
     update_agent_event_snapshot,
     store_agent_created_event,
     delete_agent_created_event_record,
+    store_action_history,
+    mark_action_as_rolled_back,
+    get_latest_action,
 )
+
 
 
 class GetUserCalendarInput(BaseModel):
@@ -164,15 +168,8 @@ class DeleteEventInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class RollbackEventInput(BaseModel):
-    event_id: str = Field(
-        description="The ID of the event to rollback. Must be an event created by the agent."
-    )
-    calendar_id: Optional[str] = Field(
-        default=None,
-        description="Optional calendar id. Defaults to configured calendar.",
-    )
-
+class RollbackActionInput(BaseModel):
+    """Input for the rollback_action tool - undoes the most recent action."""
     model_config = ConfigDict(extra="forbid")
 
 
@@ -355,6 +352,7 @@ def _get_user_calendar_impl(
 
 
 @trace_span("tool_add_event_to_calendar")
+@track_action("add")
 def _add_event_to_calendar_impl(
     uid: str,
     title: Optional[str],
@@ -513,6 +511,7 @@ def _add_event_to_calendar_with_tracking_impl(
 
 
 @trace_span("tool_modify_event")
+@track_action("update")
 def _modify_event_impl(
     uid: str,
     event_id: Optional[str],
@@ -622,6 +621,7 @@ def _modify_event_impl(
 
 
 @trace_span("tool_delete_event")
+@track_action("delete")
 def _delete_event_impl(
     uid: str,
     event_id: Optional[str],
@@ -703,10 +703,18 @@ def _delete_event_impl(
             message=f"Failed to delete calendar event: {exc}",
         )
     
+    # Include event data in response for @track_action decorator
+    event_title = ""
+    if agent_event and agent_event.snapshot:
+        event_title = agent_event.snapshot.get("title", "")
+    
     return _json_tool_response(
         status="success",
         message=f"Calendar event {event_id.strip()} has been deleted successfully. If you change your mind, I can restore this event using the rollback feature. Just let me know if you'd like me to bring it back!",
-        event_id=event_id.strip(),
+        event={
+            "id": event_id.strip(),
+            "title": event_title,
+        },
         can_restore=True,
     )
 
@@ -747,19 +755,27 @@ def _rollback_event_impl(
         if agent_event.previous_snapshot is None:
             logger.info(f"Rollback case 1: event just created, deleting event_id={event_id.strip()}")
             try:
-                delete_user_calendar_event(
+                # Call the delete tool implementation to trigger @track_action("delete") decorator
+                delete_response = _delete_event_impl(
                     uid=uid,
                     event_id=event_id.strip(),
                     calendar_id=calendar_id,
                 )
-                # Update firestore: mark as deleted
-                update_agent_event_snapshot(
-                    uid=uid,
-                    google_event_id=event_id.strip(),
-                    current_snapshot=agent_event.snapshot,
-                    new_snapshot=None,
-                    status="deleted",
-                )
+                
+                # Check if deletion was successful
+                try:
+                    delete_result = json.loads(delete_response)
+                    if delete_result.get("status") != "success":
+                        raise RuntimeError(f"Delete failed: {delete_result.get('message')}")
+                except json.JSONDecodeError:
+                    raise RuntimeError("Invalid response from delete operation")
+                
+                # Mark the original action as rolled back
+                try:
+                    mark_action_as_rolled_back(uid=uid, event_id=event_id.strip())
+                except Exception as exc:
+                    logger.warning("Failed to mark action as rolled back: {}", exc)
+                
                 success_msg = f"Rollback completed: Calendar event {event_id.strip()} (which was just created) has been deleted."
                 logger.info(f"Agent response: {success_msg}")
                 return _json_tool_response(
@@ -784,54 +800,56 @@ def _rollback_event_impl(
                 if not start_time or not end_time:
                     raise ValueError("Cannot recreate event: start and end times are required")
                 
-                create_request = CreateCalendarEventRequest(
+                # Call the add event tool implementation to trigger @track_action("add") decorator
+                # Convert datetime objects to ISO-8601 strings for the tool
+                create_response = _add_event_to_calendar_impl(
+                    uid=uid,
                     title=previous.get("title", "Restored Event"),
-                    start_time=start_time,
-                    end_time=end_time,
+                    start_time=start_time.isoformat(),
+                    end_time=end_time.isoformat(),
+                    timezone=None,  # The times already have timezone info
                     description=previous.get("description"),
                     location=previous.get("location"),
                     invitees=previous.get("invitees"),
                     calendar_id=calendar_id,
                 )
                 
-                restored_event = create_user_calendar_event(
-                    uid=uid,
-                    request=create_request,
-                )
+                # Check if creation was successful
+                try:
+                    create_result = json.loads(create_response)
+                    if create_result.get("status") != "success":
+                        raise RuntimeError(f"Create failed: {create_result.get('message')}")
+                    restored_event_data = create_result.get("event", {})
+                    restored_event_id = restored_event_data.get("id")
+                except json.JSONDecodeError:
+                    raise RuntimeError("Invalid response from create operation")
                 
-                # Store the new event as a separate record in Firestore (don't modify the old deleted event)
-                store_agent_created_event(
-                    uid=uid,
-                    google_event_id=restored_event.event_id,
-                    calendar_id=calendar_id or "primary",
-                    snapshot={
-                        "id": restored_event.event_id,
-                        "title": restored_event.title,
-                        "start": restored_event.start,
-                        "end": restored_event.end,
-                        "status": restored_event.status,
-                        "description": restored_event.description,
-                        "location": restored_event.location,
-                        "invitees": restored_event.invitees,
-                    },
-                )
+                # Store the newly created event in agent_created_events
+                # This is critical so that subsequent operations can find and manage this recreated event
+                try:
+                    store_agent_created_event(
+                        uid=uid,
+                        google_event_id=restored_event_id,
+                        calendar_id=calendar_id or "primary",
+                        snapshot=restored_event_data,
+                    )
+                    logger.info(f"Stored recreated event in agent_created_events: new_id={restored_event_id}, original_id={event_id.strip()}")
+                except Exception as exc:
+                    logger.warning(f"Failed to store recreated event in agent_created_events: {exc}")
                 
-                success_msg = f"Rollback completed: Deleted calendar event has been restored (with a new event ID). Original ID was {event_id.strip()}, new ID is {restored_event.event_id}."
+                # Mark the recovery add action as already rolled back
+                try:
+                    mark_action_as_rolled_back(uid=uid, event_id=restored_event_id)
+                    logger.info(f"Marked recovery add action as already rolled back: new_event_id={restored_event_id}")
+                except Exception as exc:
+                    logger.warning("Failed to mark recovery add action as already rolled back: {}", exc)
+                
+                success_msg = f"Rollback completed: Deleted calendar event has been restored (with a new event ID). Original ID was {event_id.strip()}, new ID is {restored_event_id}."
                 logger.info(f"Agent response: {success_msg}")
                 return _json_tool_response(
                     status="success",
                     message=success_msg,
-                    event={
-                        "id": restored_event.event_id,
-                        "title": restored_event.title,
-                        "start": restored_event.start,
-                        "end": restored_event.end,
-                        "status": restored_event.status,
-                        "location": restored_event.location,
-                        "description": restored_event.description,
-                        "invitees": restored_event.invitees,
-                        "htmlLink": restored_event.html_link,
-                    },
+                    event=restored_event_data,
                 )
             except Exception as exc:
                 raise RuntimeError(f"Failed to restore deleted event: {exc}") from exc
@@ -840,36 +858,49 @@ def _rollback_event_impl(
         else:
             logger.info(f"Rollback case 3: event was updated, restoring to previous state with same ID, event_id={event_id.strip()}")
             try:
-                restored_event = rollback_user_calendar_event(
+                # Extract previous state details
+                previous = agent_event.previous_snapshot
+                
+                # Parse datetime strings from snapshot
+                from datetime import datetime
+                start_time = datetime.fromisoformat(previous.get("start")) if previous.get("start") else None
+                end_time = datetime.fromisoformat(previous.get("end")) if previous.get("end") else None
+                
+                # Call the modify event tool implementation to trigger @track_action("update") decorator
+                modify_response = _modify_event_impl(
                     uid=uid,
                     event_id=event_id.strip(),
-                    previous_snapshot=agent_event.previous_snapshot,
+                    title=previous.get("title"),
+                    start_time=start_time.isoformat() if start_time else None,
+                    end_time=end_time.isoformat() if end_time else None,
+                    timezone=None,  # Times already have timezone info
+                    description=previous.get("description"),
+                    location=previous.get("location"),
+                    invitees=previous.get("invitees"),
                     calendar_id=calendar_id,
                 )
-                # Update firestore: swap the snapshots
-                update_agent_event_snapshot(
-                    uid=uid,
-                    google_event_id=event_id.strip(),
-                    current_snapshot=agent_event.previous_snapshot,
-                    new_snapshot=agent_event.snapshot,
-                    status="active",
-                )
+                
+                # Check if modification was successful
+                try:
+                    modify_result = json.loads(modify_response)
+                    if modify_result.get("status") != "success":
+                        raise RuntimeError(f"Modify failed: {modify_result.get('message')}")
+                    restored_event_data = modify_result.get("event", {})
+                except json.JSONDecodeError:
+                    raise RuntimeError("Invalid response from modify operation")
+                
+                # Mark the original update action as rolled back
+                try:
+                    mark_action_as_rolled_back(uid=uid, event_id=event_id.strip())
+                except Exception as exc:
+                    logger.warning("Failed to mark action as rolled back: {}", exc)
+                
                 success_msg = f"Rollback completed: Calendar event {event_id.strip()} has been restored to its previous state."
                 logger.info(f"Agent response: {success_msg}")
                 return _json_tool_response(
                     status="success",
                     message=success_msg,
-                    event={
-                        "id": restored_event.event_id,
-                        "title": restored_event.title,
-                        "start": restored_event.start,
-                        "end": restored_event.end,
-                        "status": restored_event.status,
-                        "location": restored_event.location,
-                        "description": restored_event.description,
-                        "invitees": restored_event.invitees,
-                        "htmlLink": restored_event.html_link,
-                    },
+                    event=restored_event_data,
                 )
             except Exception as exc:
                 raise RuntimeError(f"Failed to restore event: {exc}") from exc
@@ -903,6 +934,68 @@ def _rollback_event_impl(
             "invitees": restored_event.invitees,
             "htmlLink": restored_event.html_link,
         },
+    )
+
+
+@trace_span("tool_rollback_action")
+def _rollback_action_impl(uid: str, calendar_id: Optional[str]) -> str:
+    """Rollback (undo) the most recent action in action history.
+    
+    This tool undoes the latest action created by the agent, with restrictions:
+    - Must be the most recent action (cannot undo past actions)
+    - Must have been created within the last 1 hour
+    - Must not already be rolled back
+    """
+    from datetime import timedelta
+    from utility.firestore_utility import get_latest_action
+    
+    # Get the latest action
+    latest_action = get_latest_action(uid=uid)
+    
+    if not latest_action:
+        return _json_tool_response(
+            status="not_found",
+            message="No actions found in history. There's nothing to undo.",
+        )
+    
+    # Check if the action has already been rolled back
+    if latest_action.already_rolled_back:
+        return _json_tool_response(
+            status="invalid_state",
+            message=f"This action has already been undone. I cannot undo it again.",
+        )
+    
+    # Check if the action was created within the last 1 hour
+    now = datetime.now(tz=latest_action.created_at.tzinfo)
+    time_difference = now - latest_action.created_at
+    max_age = timedelta(hours=1)
+    
+    if time_difference > max_age:
+        return _json_tool_response(
+            status="expired",
+            message=f"This action was created {time_difference.total_seconds() / 3600:.1f} hours ago. "
+                   f"I can only undo actions created within the last hour. "
+                   f"This action is too old to undo.",
+        )
+    
+    # Get the event_id from the action and perform rollback
+    event_id = latest_action.event_id
+    event_title = latest_action.event_title
+    action_type = latest_action.action_type
+    
+    if not event_id:
+        return _json_tool_response(
+            status="error",
+            message="The action record is missing event information. Cannot process rollback.",
+        )
+    
+    logger.info(f"Rollback action: uid={uid}, event_id={event_id}, action_type={action_type}, event_title={event_title}")
+    
+    # Call the rollback_event implementation with the event_id from the latest action
+    return _rollback_event_impl(
+        uid=uid,
+        event_id=event_id,
+        calendar_id=calendar_id,
     )
 
 
@@ -1119,31 +1212,29 @@ def build_calendar_tools(uid: str) -> List:
             calendar_id=calendar_id,
         )
 
-    @tool(args_schema=RollbackEventInput)
-    def rollback_event(
-        event_id: str,
+    @tool(args_schema=RollbackActionInput)
+    def rollback_action(
         calendar_id: Optional[str] = None,
     ) -> str:
-        """Rollback (undo) the most recent modification to a calendar event created by the agent.
+        """Undo the most recent action performed by the agent.
         
-        This tool restores an event to its previous state before the last modification or deletion.
-        - If the event was modified, it will be restored to the state before the modification.
-        - If the event was deleted, it will be recreated with its previous content.
+        This tool reverses the latest action in the action history with these constraints:
+        - Only works on the MOST RECENT action (cannot undo past actions)
+        - Action must have been created within the last 1 hour
+        - Action must not have already been undone
         
-        CRITICAL: This tool can ONLY rollback events that the agent previously created.
-        Each event can be rolled back at most once (single-level rollback).
-        After rollback, a new modification history starts from the restored state.
+        If the latest action was a deletion, the event will be recreated.
+        If it was a creation, the event will be deleted.
+        If it was a modification, the event will be restored to its previous state.
         
         Args:
-            event_id: The event ID to rollback (required, must be agent-created)
             calendar_id: Optional calendar id
             
         Returns:
-            JSON string with restored event or error message
+            JSON string with success/error message
         """
-        return _rollback_event_impl(
+        return _rollback_action_impl(
             uid=cleaned_uid,
-            event_id=event_id,
             calendar_id=calendar_id,
         )
 
@@ -1161,7 +1252,7 @@ def build_calendar_tools(uid: str) -> List:
         add_event_to_calendar,
         modify_event,
         delete_event,
-        rollback_event,
+        rollback_action,
         list_agent_events,
     ]
 

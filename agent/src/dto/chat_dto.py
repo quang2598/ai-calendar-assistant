@@ -1,7 +1,36 @@
 from __future__ import annotations
 
-from typing import Optional
+from datetime import datetime
+from typing import Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+
+class ActionHistory(BaseModel):
+    """Record of an action (create/update/delete) taken by the agent on a calendar event."""
+    action_type: Literal["add", "update", "delete"] = Field(
+        description="Type of action: 'add' for create, 'update' for modify, 'delete' for remove"
+    )
+    already_rolled_back: bool = Field(
+        default=False,
+        description="Whether this action has been rolled back"
+    )
+    created_at: datetime = Field(
+        description="Timestamp when the action was taken"
+    )
+    event_id: str = Field(
+        min_length=1,
+        description="Google Calendar event ID (UUID)"
+    )
+    event_title: str = Field(
+        min_length=1,
+        description="Title of the event at the time of the action"
+    )
+    description: Optional[str] = Field(
+        default=None,
+        description="Short summary of what was changed (e.g., 'Updated title and start time')"
+    )
+
+    model_config = ConfigDict(extra="forbid")
 
 
 class UserLocation(BaseModel):
