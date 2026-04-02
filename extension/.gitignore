@@ -1,9 +1,0 @@
-node_modules/
-dist/
-.env
-.env.backup-*
-.DS_Store
-*.md
-src-backup-*/
-repo-reference/
-public/manifest.json
