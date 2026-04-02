@@ -3,7 +3,7 @@ from __future__ import annotations
 from langchain_core.messages import AIMessage, HumanMessage
 import pytest
 
-import agent.calendar_agent_service as calendar_agent_service
+import agent.service.calendar_agent_service as calendar_agent_service
 from dto.chat_dto import SendChatRequest
 from utility.firestore_utility import ConversationMessage
 

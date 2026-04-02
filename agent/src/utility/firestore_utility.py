@@ -7,7 +7,8 @@ from typing import List, Optional
 from google.cloud.firestore import DocumentSnapshot
 from loguru import logger
 
-from config import firestore_db, trace_span
+from config import firestore_db
+from utility.tracing_utils import trace_span
 
 
 @dataclass(frozen=True)

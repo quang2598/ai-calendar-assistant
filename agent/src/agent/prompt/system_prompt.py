@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from loguru import logger
-from .agent_config import agent_settings
+from config.agent_config import agent_settings
 
 
 SYSTEM_PROMPT_TEMPLATE = """You are a helpful conversational assistant with calendar capabilities.

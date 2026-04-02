@@ -5,9 +5,9 @@ from datetime import datetime, timezone
 
 import pytest
 
-import agent.agent_config as agent_config
-from agent.system_prompt import build_system_prompt
-from config.tracing_config import trace_span
+import config.agent_config as agent_config
+from agent.prompt import build_system_prompt
+from utility.tracing_utils import trace_span
 
 
 def test_build_system_prompt_includes_runtime_context() -> None:

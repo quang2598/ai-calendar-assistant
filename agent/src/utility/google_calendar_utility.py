@@ -11,7 +11,7 @@ from googleapiclient.discovery import Resource, build
 from googleapiclient.errors import HttpError
 from loguru import logger
 
-from config import trace_span
+from utility.tracing_utils import trace_span
 from .firestore_utility import (
     UserGoogleToken,
     fetch_user_google_token,
@@ -25,7 +25,7 @@ GOOGLE_CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar"
 
 
 def _get_agent_settings():
-    from agent.agent_config import agent_settings
+    from config.agent_config import agent_settings
 
     return agent_settings
 
