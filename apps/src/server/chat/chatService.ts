@@ -280,7 +280,7 @@ async function resolveAgentResponseText(params: {
     longitude: number;
     accuracy?: number;
   } | null;
-  userToken: string;
+  firebaseIdToken: string;
 }): Promise<string> {
   try {
     const agentResponse = await requestAgentChatResponse(
@@ -289,7 +289,7 @@ async function resolveAgentResponseText(params: {
         message: params.message,
         userLocation: params.userLocation,
       },
-      params.userToken,
+      params.firebaseIdToken,
     );
     return agentResponse.responseMessage.text;
   } catch {
@@ -303,7 +303,6 @@ export async function processBackendChatRequest(
   request: BackendChatRequest,
   idToken: string,
   uid: string,
-  userToken: string,
 ): Promise<BackendChatResponse> {
   try {
     const auth = getBackendAuthContextByUid(uid);
@@ -336,7 +335,7 @@ export async function processBackendChatRequest(
       conversationId,
       message: text,
       userLocation: request.userLocation || null,
-      userToken,
+      firebaseIdToken: idToken,
     });
 
     const responseMessageId = await saveMessage({

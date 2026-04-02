@@ -549,9 +549,36 @@ def _modify_event_impl(
         )
     
     try:
-        # Get current event snapshot before modification
+        # Get current event snapshot before modification (for rollback)
         agent_event = get_agent_created_event(uid=uid, google_event_id=event_id.strip())
         current_snapshot = agent_event.snapshot if agent_event else {}
+        
+        # IMPORTANT: Fetch the CURRENT event from Google Calendar to get fresh state
+        # This ensures we capture what actually changed, not stale stored snapshots
+        current_google_event = None
+        try:
+            from utility.google_calendar_utility import _resolve_calendar_id
+            from googleapiclient.discovery import build
+            from utility.google_calendar_utility import _execute_with_auth_retry, _map_calendar_event
+            
+            resolved_calendar_id = _resolve_calendar_id(calendar_id)
+            
+            def get_operation(service):
+                return service.events().get(calendarId=resolved_calendar_id, eventId=event_id.strip()).execute()
+            
+            current_google_event_raw = _execute_with_auth_retry(uid=uid, operation=get_operation)
+            # Extract just the fields we need for change tracking
+            if current_google_event_raw:
+                current_google_event = {
+                    "title": str(current_google_event_raw.get("summary", "")).strip() or "(untitled event)",
+                    "start": current_google_event_raw.get("start", {}).get("dateTime") or current_google_event_raw.get("start", {}).get("date"),
+                    "end": current_google_event_raw.get("end", {}).get("dateTime") or current_google_event_raw.get("end", {}).get("date"),
+                    "location": current_google_event_raw.get("location"),
+                    "description": current_google_event_raw.get("description"),
+                }
+        except Exception as e:
+            logger.warning(f"Failed to fetch current Google event for change tracking: {e}")
+            current_google_event = None
         
         # Perform the modification
         modified_event = modify_user_calendar_event(
@@ -603,6 +630,38 @@ def _modify_event_impl(
             message=f"Failed to modify calendar event: {exc}",
         )
     
+    # Compute what changed for action history description
+    changes = {}
+    # Use fresh Google event data if available, otherwise fall back to stored snapshot
+    old_state = current_google_event if current_google_event else current_snapshot
+    
+    if old_state:
+        # Only include fields that actually changed (old value != new value)
+        # Skip if both values are None or empty
+        old_title = old_state.get("title")
+        if old_title != modified_event.title and not (not old_title and not modified_event.title):
+            changes["title"] = (old_title, modified_event.title)
+        
+        old_start = old_state.get("start")
+        if old_start != modified_event.start and not (not old_start and not modified_event.start):
+            changes["start"] = (old_start, modified_event.start)
+        
+        old_end = old_state.get("end")
+        if old_end != modified_event.end and not (not old_end and not modified_event.end):
+            changes["end"] = (old_end, modified_event.end)
+        
+        old_location = old_state.get("location")
+        if old_location != modified_event.location and not (not old_location and not modified_event.location):
+            changes["location"] = (old_location, modified_event.location)
+        
+        old_description = old_state.get("description")
+        if old_description != modified_event.description and not (not old_description and not modified_event.description):
+            changes["description"] = (old_description, modified_event.description)
+        
+        old_invitees = old_state.get("invitees")
+        if old_invitees != modified_event.invitees and not (not old_invitees and not modified_event.invitees):
+            changes["attendees"] = (old_invitees, modified_event.invitees)
+    
     return _json_tool_response(
         status="success",
         message="Calendar event modified successfully.",
@@ -617,6 +676,7 @@ def _modify_event_impl(
             "invitees": modified_event.invitees,
             "htmlLink": modified_event.html_link,
         },
+        changes=changes,
     )
 
 
@@ -1025,7 +1085,6 @@ def _list_agent_events_impl(uid: str) -> str:
             snapshot_to_use = event.snapshot
         # For deleted events, use the previous snapshot so agent can see and restore them
         elif event.status == "deleted" and event.previous_snapshot is not None:
-            logger.info(f"Including deleted event in list: event_id={event.google_event_id}, uid={uid}")
             snapshot_to_use = event.previous_snapshot
         else:
             # Skip events with no usable snapshot
