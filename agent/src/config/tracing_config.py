@@ -166,34 +166,92 @@ def _record_action_history(
         logger.warning("Failed to record action history: {}", exc)
 
 
+def _extract_datetime_string(value: any) -> Optional[str]:
+    """
+    Extract a datetime string from various formats:
+    - Direct string: "2026-04-01T19:00:00+00:00"
+    - Dict with dateTime key: {"dateTime": "2026-04-01T19:00:00+00:00", "timeZone": "UTC"}
+    - Dict with date key: {"date": "2026-04-01"}
+    - None or empty string: returns None
+    """
+    if not value:
+        return None
+    
+    # If it's already a string, return it (unless it's "None")
+    if isinstance(value, str):
+        value_str = value.strip()
+        if value_str and value_str != "None":
+            return value_str
+        return None
+    
+    # If it's a dict (Google Calendar event format)
+    if isinstance(value, dict):
+        # Try dateTime first (for timed events)
+        datetime_val = value.get("dateTime")
+        if datetime_val and isinstance(datetime_val, str):
+            return datetime_val.strip()
+        
+        # Try date (for all-day events)
+        date_val = value.get("date")
+        if date_val and isinstance(date_val, str):
+            return date_val.strip()
+    
+    return None
+
+
 def _format_datetime(datetime_str: str) -> Optional[str]:
     """
     Format a datetime string into a natural format like 'Mar 16 7pm UTC-7'.
     Handles ISO format strings like '2026-04-01T19:00:00' or with timezone info.
+    Returns None if datetime_str is None, empty, or can't be parsed.
     """
+    if not datetime_str or datetime_str == "None":
+        return None
+    
     try:
-        # Try to parse ISO format
-        if datetime_str.endswith('Z'):
-            dt = datetime.fromisoformat(datetime_str.replace('Z', '+00:00'))
-        else:
-            dt = datetime.fromisoformat(datetime_str)
-        
-        # Extract timezone info if present
+        dt = None
         tz_str = ""
-        if dt.tzinfo:
-            tz_offset = dt.strftime('%z')
-            if tz_offset:
-                # Format as UTC-7 or UTC+5, etc.
-                hours = int(tz_offset[:3])
-                tz_str = f" UTC{hours:+d}" if hours != 0 else " UTC"
         
-        # Format as "Mar 16 7pm"
-        month_day = dt.strftime('%b %-d').lstrip('0') if hasattr(dt, 'day') else dt.strftime('%b %d').lstrip('0')
+        # Extract timezone offset if present
+        tz_match = re.search(r'([+-])(\d{2}):(\d{2})$', datetime_str)
+        if tz_match:
+            sign, tz_hour, tz_min = tz_match.groups()
+            tz_offset_hours = int(tz_hour) if sign == '+' else -int(tz_hour)
+            tz_str = f" UTC{tz_offset_hours:+d}" if tz_offset_hours != 0 else " UTC"
+        
+        # Remove timezone from string for parsing the datetime part
+        dt_str_no_tz = re.sub(r'[+-]\d{2}:\d{2}$', '', datetime_str)
+        
+        # Try fromisoformat first
+        try:
+            if dt_str_no_tz.endswith('Z'):
+                dt = datetime.fromisoformat(dt_str_no_tz.replace('Z', '+00:00'))
+            else:
+                dt = datetime.fromisoformat(dt_str_no_tz)
+        except (ValueError, TypeError):
+            # Manual parsing for ISO format: 2026-04-03T22:00:00
+            match = re.match(r'(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})', dt_str_no_tz)
+            if not match:
+                return None
+            
+            year, month, day, hour, minute, second = match.groups()
+            dt = datetime(int(year), int(month), int(day), int(hour), int(minute), int(second))
+        
+        if not dt:
+            return None
+        
+        # Format as "Apr 3 10pm UTC-7"
+        month_day = dt.strftime('%b %d').strip()
+        # Remove leading zero from day if present
+        if month_day[4] == '0':
+            month_day = month_day[:4] + month_day[5:]
+        
         hour = dt.hour % 12 or 12
         am_pm = "am" if dt.hour < 12 else "pm"
         
         return f"{month_day} {hour}{am_pm}{tz_str}"
-    except (ValueError, AttributeError):
+            
+    except Exception:
         return None
 
 
@@ -222,7 +280,7 @@ def _build_update_description(event_title: str, result_obj: dict) -> str:
     changes = result_obj.get("changes", {})
     
     if not changes:
-        return f"Updated event '{event_title}'"
+        return None  # No description when nothing actually changed
     
     change_details = []
     
@@ -245,18 +303,24 @@ def _build_update_description(event_title: str, result_obj: dict) -> str:
         
         # Format time values naturally if they look like timestamps
         if label in ["start time", "end time"]:
-            formatted_old = _format_datetime(old_val) if old_val else "empty"
-            formatted_new = _format_datetime(new_val) if new_val else "empty"
+            # Extract datetime string from various formats (dict or string)
+            old_datetime_str = _extract_datetime_string(old_val)
+            new_datetime_str = _extract_datetime_string(new_val)
+            
+            # Format the extracted strings
+            formatted_old = _format_datetime(old_datetime_str) if old_datetime_str else "no time set"
+            formatted_new = _format_datetime(new_datetime_str) if new_datetime_str else "no time set"
+            
             change_details.append(f"{label}: {formatted_old} → {formatted_new}")
         else:
             # Format other values simply
-            old_str = f"'{old_val}'" if old_val else "empty"
-            new_str = f"'{new_val}'" if new_val else "empty"
+            old_str = f"'{old_val}'" if (old_val and str(old_val).strip() and str(old_val) != "None") else "empty"
+            new_str = f"'{new_val}'" if (new_val and str(new_val).strip() and str(new_val) != "None") else "empty"
             change_details.append(f"{label}: {old_str} → {new_str}")
     
     if change_details:
         return f"Updated {', '.join(change_details)}"
-    return f"Updated event '{event_title}'"
+    return None
 
 
 def _build_delete_description(event_title: str) -> str:

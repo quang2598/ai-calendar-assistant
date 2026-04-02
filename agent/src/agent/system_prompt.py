@@ -243,7 +243,6 @@ def build_system_prompt(
     if user_timezone and user_timezone.strip().lower() != "unknown":
         # Clean the timezone string first
         cleaned_tz = user_timezone.strip()
-        logger.info(f"Processing user timezone: '{user_timezone}' (cleaned: '{cleaned_tz}')")
         
         # Convert to ZoneInfo-compatible format if needed
         zoneinfo_tz = _convert_to_zoneinfo_compatible(cleaned_tz)
@@ -252,7 +251,6 @@ def build_system_prompt(
             user_tz = ZoneInfo(zoneinfo_tz)
             now_user_tz = now_utc.astimezone(user_tz)
             current_user_time_str = now_user_tz.isoformat()
-            logger.info(f"✓ Calculated user local time: {current_user_time_str} (timezone: {zoneinfo_tz})")
         except Exception as e:
             logger.warning(f"Failed to use ZoneInfo for timezone '{zoneinfo_tz}': {e}")
             logger.warning(f"Timezone string details: original='{cleaned_tz}', converted='{zoneinfo_tz}', type={type(cleaned_tz)}, repr={repr(cleaned_tz)}")
@@ -292,7 +290,6 @@ def build_system_prompt(
             logger.debug("User location has invalid format: {}", user_location)
     
     final_tz = (user_timezone or "").strip() or "unknown"
-    logger.info(f"System prompt values: current_utc={now_utc.isoformat()}, current_user_time={current_user_time_str}, user_timezone={final_tz}")
     
     return SYSTEM_PROMPT_TEMPLATE.format(
         current_utc_datetime=now_utc.isoformat(),

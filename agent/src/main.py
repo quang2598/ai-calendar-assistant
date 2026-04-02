@@ -9,7 +9,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 from config import firestore_db
 from agent import agent_settings, run_calendar_agent_turn
-from agent.jwt_middleware import JWTAuthMiddleware
+from agent.firebase_middleware import FirebaseAuthMiddleware
+from agent.tools.calendar_tools import _rollback_event_impl
 from dto import SendChatRequest, SendChatResponse
 
 # Load .env file from parent directory (agent/) since we're running from agent/src/
@@ -21,10 +22,7 @@ logger.debug("Loading .env from: {}", env_path)
 app = FastAPI()
 
 # Configure CORS policy
-allowed_origins = [
-    "http://localhost:3000",
-    "http://localhost:8000",
-]
+allowed_origins = []
 
 # Add vercel app URL if configured
 vercel_app_url = os.getenv("VERCEL_APP_URL", "").strip()
@@ -39,18 +37,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Add JWT authentication middleware
-app.add_middleware(JWTAuthMiddleware)
+# Add Firebase authentication middleware
+app.add_middleware(FirebaseAuthMiddleware)
 
 # Log startup info for debugging
 logger.info("Agent API starting up...")
-jwt_secret = os.getenv("JWT_SECRET_KEY", "").strip()
-logger.info("JWT_SECRET_KEY configured: {}", bool(jwt_secret))
-if not jwt_secret:
-    logger.warning("WARNING: JWT_SECRET_KEY is not set! JWT validation will fail.")
 vercel_url = os.getenv("VERCEL_APP_URL", "").strip()
-logger.info("VERCEL_APP_URL: {}", vercel_url if vercel_url else "not configured")
 logger.info("CORS allowed origins: {}", allowed_origins)
+logger.info("Firebase Admin authentication enabled")
 
 
 def _map_runtime_error_to_http(exc: RuntimeError) -> HTTPException:
@@ -122,17 +116,20 @@ def _map_runtime_error_to_http(exc: RuntimeError) -> HTTPException:
 
 @app.post("/agent/send-chat", response_model=SendChatResponse)
 async def send_chat(request: Request, payload: SendChatRequest) -> SendChatResponse:
-    # Extract uid from verified JWT token (set by JWTAuthMiddleware)
-    uid = getattr(request.state, "uid", None)
-    if not uid:
+    # Extract Firebase ID token and verified claims from Firebase auth middleware
+    firebase_id_token = getattr(request.state, "firebase_id_token", None)
+    decoded_token = getattr(request.state, "decoded_token", None)
+    
+    if not firebase_id_token or not decoded_token:
         raise HTTPException(
             status_code=401,
             detail={
                 "code": "unauthorized",
-                "message": "Authentication failed",
+                "message": "Firebase authentication failed",
             },
         )
     
+    uid = decoded_token.get("uid")
     logger.info(
         "Received chat request: uid={}, conversation_id={}",
         uid,
@@ -150,6 +147,80 @@ async def send_chat(request: Request, payload: SendChatRequest) -> SendChatRespo
         ) from exc
     except RuntimeError as exc:
         raise _map_runtime_error_to_http(exc) from exc
+
+
+@app.post("/agent/rollback")
+async def rollback_event(request: Request) -> dict:
+    """Rollback (undo) a calendar event modification.
+    
+    This endpoint is called from the Next.js backend and doesn't require JWT auth
+    since it's a trusted backend-to-backend call.
+    """
+    try:
+        body = await request.json()
+        uid = body.get("uid")
+        event_id = body.get("event_id")
+        calendar_id = body.get("calendar_id")
+        
+        if not uid or not event_id:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "missing_params",
+                    "message": "uid and event_id are required",
+                },
+            )
+        
+        logger.info("Rollback request: uid={}, event_id={}", uid, event_id)
+        
+        # Call the internal rollback implementation
+        result = _rollback_event_impl(uid=uid, event_id=event_id, calendar_id=calendar_id)
+        
+        # Parse the JSON response from the tool
+        import json
+        try:
+            result_dict = json.loads(result)
+            
+            # Check if the rollback was successful
+            if result_dict.get("status") != "success":
+                raise HTTPException(
+                    status_code=400,
+                    detail={
+                        "code": "rollback_failed",
+                        "message": result_dict.get("message", "Failed to rollback event"),
+                    },
+                )
+            
+            return result_dict
+        except json.JSONDecodeError:
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "code": "internal_error",
+                    "message": "Invalid response from rollback operation",
+                },
+            )
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "invalid_request",
+                "message": str(exc),
+            },
+        ) from exc
+    except RuntimeError as exc:
+        raise _map_runtime_error_to_http(exc) from exc
+    except Exception as exc:
+        logger.error("Rollback error: {}", exc)
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "code": "internal_server_error",
+                "message": str(exc),
+            },
+        ) from exc
 
 
 @app.exception_handler(RequestValidationError)

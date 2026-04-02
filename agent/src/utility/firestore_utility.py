@@ -58,9 +58,14 @@ def _to_conversation_message(document: DocumentSnapshot) -> Optional[Conversatio
 
 
 @trace_span("fetch_conversation_messages")
-def fetch_conversation_messages(uid: str, conversation_id: str) -> List[ConversationMessage]:
+def fetch_conversation_messages(uid: str, conversation_id: str, limit: int = 10) -> List[ConversationMessage]:
     """
-    Fetch all conversation messages ordered by createdAt ascending.
+    Fetch conversation messages ordered by createdAt ascending.
+    
+    Args:
+        uid: User ID
+        conversation_id: Conversation ID
+        limit: Maximum number of messages to fetch (default 50 to optimize I/O)
     """
     cleaned_conversation_id = conversation_id.strip()
     if not cleaned_conversation_id:
@@ -73,6 +78,7 @@ def fetch_conversation_messages(uid: str, conversation_id: str) -> List[Conversa
         .document(cleaned_conversation_id)
         .collection("messages")
         .order_by("createdAt")
+        .limit(limit)
     )
 
     results: List[ConversationMessage] = []
@@ -367,12 +373,6 @@ def update_agent_event_snapshot(
             "lastModifiedAt": now,
         },
         merge=True,
-    )
-    logger.info(
-        "Updated snapshot for agent-created event: uid={}, eventId={}, status={}",
-        cleaned_uid,
-        cleaned_event_id,
-        status,
     )
 
 

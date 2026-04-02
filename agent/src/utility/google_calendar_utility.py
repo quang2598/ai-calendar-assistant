@@ -565,7 +565,48 @@ def modify_user_calendar_event(
         if existing_title:
             update_payload["summary"] = existing_title
     
-    if request.start_time is not None or request.end_time is not None:
+    # IMPORTANT: For timed events, Google Calendar API requires BOTH start AND end times
+    # to be present in the update payload, even if you're only changing other fields like location
+    existing_start = current_event.get("start")
+    existing_end = current_event.get("end")
+    is_all_day_event = "date" in existing_start and "dateTime" not in existing_start
+    
+    if not is_all_day_event:
+        # For timed events, always include start and end in update payload
+        effective_timezone_name = request.timezone_name or _extract_timezone(current_event, "timeZone") or _fallback_timezone_name()
+        
+        if request.start_time is not None:
+            event_start = _ensure_datetime_timezone(request.start_time, effective_timezone_name)
+            update_payload["start"] = {
+                "dateTime": event_start.isoformat(),
+                "timeZone": effective_timezone_name,
+            }
+        else:
+            # Use existing start time if not being changed
+            if existing_start:
+                update_payload["start"] = existing_start
+        
+        if request.end_time is not None:
+            event_end = _ensure_datetime_timezone(request.end_time, effective_timezone_name)
+            update_payload["end"] = {
+                "dateTime": event_end.isoformat(),
+                "timeZone": effective_timezone_name,
+            }
+        else:
+            # Use existing end time if not being changed
+            if existing_end:
+                update_payload["end"] = existing_end
+        
+        # Validate that start < end
+        start_val = update_payload.get("start") or current_event.get("start")
+        end_val = update_payload.get("end") or current_event.get("end")
+        if start_val and end_val:
+            start_str = str(start_val.get("dateTime", "") or start_val.get("date", ""))
+            end_str = str(end_val.get("dateTime", "") or end_val.get("date", ""))
+            if start_str >= end_str:
+                raise ValueError("Event end_time must be after start_time")
+    elif request.start_time is not None or request.end_time is not None:
+        # For all-day events, handle time changes
         effective_timezone_name = request.timezone_name or _extract_timezone(current_event, "timeZone") or _fallback_timezone_name()
         
         if request.start_time is not None:

@@ -82,13 +82,13 @@ function parseAgentChatResponse(data: unknown): AgentChatResponse {
 
 export async function requestAgentChatResponse(
   payload: AgentChatRequest,
-  userToken: string,
+  firebaseIdToken: string,
 ): Promise<AgentChatResponse> {
   const response = await fetch(getAgentChatUrl(), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "X-User-Token": userToken,
+      Authorization: `Bearer ${firebaseIdToken}`,
     },
     cache: "no-store",
     body: JSON.stringify(payload),

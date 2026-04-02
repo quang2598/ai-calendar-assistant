@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from contextvars import ContextVar
 from typing import List, Optional
 
 from langchain.agents import create_agent
@@ -15,8 +16,9 @@ from utility import ConversationMessage, get_user_calendar_timezone, load_agent_
 from .agent_config import agent_settings
 from .system_prompt import build_system_prompt
 from .tools import build_calendar_tools, build_location_tools
-import os
-from langchain_openai import ChatOpenAI
+
+# Request-scoped context for timezone caching to avoid redundant Google Calendar API calls
+_request_timezone_cache: ContextVar[str] = ContextVar("request_timezone_cache", default="")
 
 
 
@@ -28,6 +30,31 @@ def _map_role_to_langchain_message(message: ConversationMessage) -> BaseMessage 
         return AIMessage(content=message.text)
 
     logger.warning("Skipping unsupported message role in history: {}", message.role)
+    return None
+
+
+def _set_request_timezone(timezone: str) -> None:
+    """Cache timezone for the current request to avoid redundant lookups."""
+    _request_timezone_cache.set(timezone)
+
+
+def _get_cached_timezone(uid: str) -> Optional[str]:
+    """Get timezone from cache if available, otherwise fetch from Google Calendar."""
+    cached = _request_timezone_cache.get()
+    if cached:
+        logger.debug("Using cached timezone for request: {}", cached)
+        return cached
+    
+    # Not in cache, fetch from Google Calendar
+    try:
+        user_timezone = get_user_calendar_timezone(uid=uid)
+        if user_timezone and user_timezone.strip().lower() != "unknown":
+            _set_request_timezone(user_timezone)
+            logger.info("Retrieved and cached user timezone from Google Calendar: {}", user_timezone)
+            return user_timezone
+    except Exception as exc:
+        logger.warning("Failed to retrieve user timezone from Google Calendar: {}", exc)
+    
     return None
 
 def _build_llm():
@@ -177,6 +204,10 @@ def invoke_calendar_agent(
 
 @trace_span("run_calendar_agent_turn")
 def run_calendar_agent_turn(payload: SendChatRequest, uid: str) -> SendChatResponse:
+    # uid is already verified by Firebase middleware, no need to re-verify
+    if not uid:
+        raise ValueError("Token missing uid claim")
+    
     history = load_agent_history_messages(
         uid=uid,
         conversation_id=payload.conversationId,
@@ -196,32 +227,15 @@ def run_calendar_agent_turn(payload: SendChatRequest, uid: str) -> SendChatRespo
     
     # Try to get user's timezone from Google Calendar settings
     # This is the primary source of truth for user's timezone
-    user_timezone = None
-    try:
-        user_timezone = get_user_calendar_timezone(uid=uid)
-        if user_timezone and user_timezone.strip().lower() != "unknown":
-            logger.info("Retrieved user timezone from Google Calendar: {}", user_timezone)
-    except Exception as exc:
-        logger.warning("Failed to retrieve user timezone from Google Calendar: {}", exc)
+    user_timezone = _get_cached_timezone(uid=uid)
     
-    # If we couldn't get timezone from Google Calendar, check if it's been established in the conversation
+    # If we couldn't get timezone from Google Calendar, use fallback
     if not user_timezone or user_timezone.strip().lower() == "unknown":
-        # Check conversation history for timezone information
-        # Look for patterns in previous responses that might indicate user has provided timezone
-        for msg in history:
-            msg_lower = msg.text.lower()
-            # Check if user has mentioned common timezone indicators
-            if any(tz_indicator in msg_lower for tz_indicator in [
-                "america/", "europe/", "asia/", "australia/", "pacific/",
-                "utc", "est", "cst", "mst", "pst", "gmt", "timezone"
-            ]):
-                # User has mentioned timezone info in conversation
-                logger.info("Detected potential timezone mention in conversation history")
-                break
-        
-        # Fallback to agent settings default, but mark as fallback
         user_timezone = agent_settings.calendar_default_timezone
-        logger.info("User timezone not explicitly set; will use fallback and may prompt user: {}", user_timezone)
+        logger.info("User timezone not found from Google Calendar; using fallback: {}", user_timezone)
+    else:
+        # Cache it for subsequent tool calls
+        _set_request_timezone(user_timezone)
     output_text = invoke_calendar_agent(
         uid=uid,
         user_timezone=user_timezone,
@@ -229,7 +243,7 @@ def run_calendar_agent_turn(payload: SendChatRequest, uid: str) -> SendChatRespo
         chat_history=langchain_history,
         user_location=user_location,
     )
-    logger.info("Agent received user message with timezone: {}, user_location: {}", user_timezone, user_location)
+    logger.info("Agent processing with timezone: {}, user_location: {}", user_timezone, user_location)
 
     if _looks_like_internal_protocol_leak(output_text):
         logger.warning(
