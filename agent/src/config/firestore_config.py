@@ -1,6 +1,4 @@
 from __future__ import annotations
-import os
-from pathlib import Path
 from pydantic import Field, ValidationError
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -8,17 +6,14 @@ import firebase_admin
 from firebase_admin import credentials, firestore
 from google.cloud.firestore import Client as FirestoreClient
 from loguru import logger
-from .tracing_config import trace_span
+from utility.tracing_utils import trace_span
 
 firestore_db = None
 _firestore_app = None
 
-# Get the .env file path relative to the agent directory
-_env_file = Path(__file__).resolve().parent.parent.parent / ".env"
-
 class FireStoreSettings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=str(_env_file),
+        env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
     )

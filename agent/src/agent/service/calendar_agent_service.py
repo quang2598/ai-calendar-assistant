@@ -10,12 +10,12 @@ from langchain_ollama import ChatOllama
 from langchain_openai import ChatOpenAI
 from loguru import logger
 
-from config import trace_span
+from utility.tracing_utils import trace_span
+from config.agent_config import agent_settings
+from agent.prompt import build_system_prompt
 from dto import SendChatRequest, SendChatResponse
 from utility import ConversationMessage, get_user_calendar_timezone, load_agent_history_messages
-from .agent_config import agent_settings
-from .system_prompt import build_system_prompt
-from .tools import build_calendar_tools, build_location_tools
+from agent.tools import build_calendar_tools, build_location_tools
 
 # Request-scoped context for timezone caching to avoid redundant Google Calendar API calls
 _request_timezone_cache: ContextVar[str] = ContextVar("request_timezone_cache", default="")

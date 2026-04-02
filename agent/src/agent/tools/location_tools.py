@@ -8,7 +8,7 @@ from googlemaps.exceptions import ApiError
 from langchain.tools import tool
 from pydantic import BaseModel, ConfigDict, Field
 
-from config import trace_span
+from utility.tracing_utils import trace_span
 
 
 # Mapping of user-friendly service names to Google Places API types

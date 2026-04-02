@@ -7,7 +7,11 @@ import {
 } from "firebase/firestore";
 
 import { db } from "@/src/lib/firebase";
-import type { ConversationMessage, ConversationSummary, ChatMessageRole } from "@/src/types/chat";
+import type {
+  ConversationMessage,
+  ConversationSummary,
+  ChatMessageRole,
+} from "@/src/types/chat";
 
 type ConversationListener = (conversations: ConversationSummary[]) => void;
 type MessageListener = (messages: ConversationMessage[]) => void;
@@ -35,17 +39,28 @@ export function listenToConversations(
   onError?: ListenerErrorHandler,
 ): () => void {
   const conversationsRef = collection(db, "users", uid, "conversations");
-  const conversationsQuery = query(conversationsRef, orderBy("lastUpdated", "desc"));
+  const conversationsQuery = query(
+    conversationsRef,
+    orderBy("lastUpdated", "desc"),
+  );
 
   return onSnapshot(
     conversationsQuery,
     (snapshot) => {
       const conversations = snapshot.docs.map((doc) => {
         const data = doc.data();
+        let title = "Untitled chat";
+
+        // Special handling for extension conversation
+        if (doc.id === "extension-conversation") {
+          title = "Extension conversation";
+        } else if (typeof data.title === "string" && data.title.trim()) {
+          title = data.title;
+        }
 
         return {
           id: doc.id,
-          title: typeof data.title === "string" && data.title.trim() ? data.title : "Untitled chat",
+          title: title,
           createdAtMs: toMillis(data.createdAt),
           lastUpdatedMs: toMillis(data.lastUpdated),
         } satisfies ConversationSummary;
@@ -63,7 +78,14 @@ export function listenToMessages(
   onData: MessageListener,
   onError?: ListenerErrorHandler,
 ): () => void {
-  const messagesRef = collection(db, "users", uid, "conversations", conversationId, "messages");
+  const messagesRef = collection(
+    db,
+    "users",
+    uid,
+    "conversations",
+    conversationId,
+    "messages",
+  );
   const messagesQuery = query(messagesRef, orderBy("createdAt", "asc"));
 
   return onSnapshot(

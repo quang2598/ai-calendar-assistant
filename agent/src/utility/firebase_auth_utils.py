@@ -1,8 +1,6 @@
 """Firebase Authentication utilities for verifying user tokens."""
 
 from typing import Dict, Any
-
-import firebase_admin
 from firebase_admin import auth
 from loguru import logger
 

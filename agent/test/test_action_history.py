@@ -263,7 +263,7 @@ def test_action_history_record_with_description() -> None:
 
 def test_detailed_descriptions() -> None:
     """Test detailed description generation for different action types."""
-    from config.tracing_config import _build_add_description, _build_update_description, _build_delete_description
+    from utility.tracing_utils import _build_add_description, _build_update_description, _build_delete_description
     
     # Test add description with details
     event_data_add = {

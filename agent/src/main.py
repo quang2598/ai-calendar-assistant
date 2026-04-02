@@ -1,6 +1,4 @@
 import os
-from pathlib import Path
-from dotenv import load_dotenv
 from utility import setup_logging
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
@@ -8,16 +6,11 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 from config import firestore_db
-from agent import agent_settings, run_calendar_agent_turn
-from agent.firebase_middleware import FirebaseAuthMiddleware
+from config.agent_config import agent_settings
+from agent.service import run_calendar_agent_turn
+from service import FirebaseAuthMiddleware
 from agent.tools.calendar_tools import _rollback_event_impl
 from dto import SendChatRequest, SendChatResponse
-
-# Load .env file from parent directory (agent/) since we're running from agent/src/
-env_path = Path(__file__).parent.parent / ".env"
-load_dotenv(env_path)
-logger.debug("Loading .env from: {}", env_path)
-
 
 app = FastAPI()
 
@@ -131,8 +124,7 @@ async def send_chat(request: Request, payload: SendChatRequest) -> SendChatRespo
     
     uid = decoded_token.get("uid")
     logger.info(
-        "Received chat request: uid={}, conversation_id={}",
-        uid,
+        "Received chat request: conversation_id={}",
         payload.conversationId,
     )
     try:
@@ -171,7 +163,7 @@ async def rollback_event(request: Request) -> dict:
                 },
             )
         
-        logger.info("Rollback request: uid={}, event_id={}", uid, event_id)
+        logger.info("Rollback request: event_id={}", event_id)
         
         # Call the internal rollback implementation
         result = _rollback_event_impl(uid=uid, event_id=event_id, calendar_id=calendar_id)

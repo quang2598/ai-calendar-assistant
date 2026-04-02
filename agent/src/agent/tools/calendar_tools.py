@@ -9,7 +9,7 @@ from langchain.tools import tool
 from loguru import logger
 from pydantic import BaseModel, ConfigDict, Field
 
-from config import trace_span, track_action
+from utility.tracing_utils import trace_span, track_action
 from utility.google_calendar_utility import (
     CreateCalendarEventRequest,
     ModifyCalendarEventRequest,
