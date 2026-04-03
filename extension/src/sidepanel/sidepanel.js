@@ -1,8 +1,5 @@
 import { getAuthState } from "../shared/auth.js";
-import {
-  onActionHistoryChanged,
-  onEventsChanged,
-} from "../shared/firestore.js";
+import { fetchActionHistory, fetchEvents, rollbackAction } from "../shared/backend.js";
 import { onMessage, onStorageChanged } from "../shared/messages.js";
 
 // ─── DOM Elements ───
@@ -27,11 +24,7 @@ let authToken = null;
 let currentMonth = new Date().getMonth();
 let currentYear = new Date().getFullYear();
 let selectedDate = new Date();
-let calendarEvents = []; // From Google Calendar API
-let agentEvents = []; // From Firestore event-managed-by-agent
-let unsubEvents = null;
-let unsubHistory = null;
-let previousAgentEventCount = 0;
+let calendarEvents = []; // From backend API
 let refreshInterval = null;
 
 // ─── Init ───
@@ -42,8 +35,7 @@ let refreshInterval = null;
     authToken = stored.authToken;
     showMainScreen();
     renderCalendar();
-    startListeners();
-    fetchCalendarEvents();
+    refreshAll();
     startPeriodicRefresh();
   }
 })();
@@ -57,13 +49,11 @@ onStorageChanged((changes) => {
         authToken = stored.authToken;
         showMainScreen();
         renderCalendar();
-        startListeners();
-        fetchCalendarEvents();
+        refreshAll();
         startPeriodicRefresh();
       } else {
         firebaseUid = null;
         authToken = null;
-        stopListeners();
         stopPeriodicRefresh();
         showAuthPlaceholder();
       }
@@ -72,8 +62,8 @@ onStorageChanged((changes) => {
 });
 
 onMessage((message) => {
-  if (message.action === "refreshCalendarEvents") {
-    fetchCalendarEvents();
+  if (message.action === "refreshCalendarEvents" || message.action === "agentResponseReceived") {
+    refreshAll();
   }
 
   if (message.action === "authChanged") {
@@ -83,8 +73,7 @@ onMessage((message) => {
         authToken = stored.authToken;
         showMainScreen();
         renderCalendar();
-        startListeners();
-        fetchCalendarEvents();
+        refreshAll();
         startPeriodicRefresh();
       } else {
         showAuthPlaceholder();
@@ -93,50 +82,49 @@ onMessage((message) => {
   }
 });
 
-// ─── Google Calendar API Fetch ───
+// ─── Data Fetching (via backend API) ───
 
-async function fetchCalendarEvents() {
-  if (!authToken) return;
+async function refreshCalendarEvents() {
+  if (!firebaseUid) return;
 
   try {
     const start = new Date(currentYear, currentMonth, 1);
     const end = new Date(currentYear, currentMonth + 1, 0, 23, 59, 59);
 
-    const url = `https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${encodeURIComponent(start.toISOString())}&timeMax=${encodeURIComponent(end.toISOString())}&singleEvents=true&orderBy=startTime&maxResults=250`;
-
-    const res = await fetch(url, {
-      headers: { Authorization: `Bearer ${authToken}` },
-    });
-
-    if (res.ok) {
-      const data = await res.json();
-      calendarEvents = (data.items || []).map((evt) => ({
-        id: evt.id,
-        title: evt.summary || "Untitled Event",
-        startTime: evt.start?.dateTime || evt.start?.date,
-        endTime: evt.end?.dateTime || evt.end?.date,
-        allDay: !evt.start?.dateTime,
-        source: "google",
-      }));
-      renderCalendar();
-      renderEventsForDate(selectedDate);
-    } else if (res.status === 401 || res.status === 403) {
-      // Token expired — try to get a new one
-      const stored = await getAuthState();
-      if (stored.authToken && stored.authToken !== authToken) {
-        authToken = stored.authToken;
-        fetchCalendarEvents(); // Retry with new token
-      }
-    }
+    const events = await fetchEvents(firebaseUid, start.toISOString(), end.toISOString());
+    calendarEvents = events.map((evt) => ({
+      id: evt.id,
+      title: evt.title || evt.summary || "Untitled Event",
+      startTime: evt.start,
+      endTime: evt.end,
+      allDay: evt.allDay || false,
+    }));
+    renderCalendar();
+    renderEventsForDate(selectedDate);
   } catch (err) {
     console.warn("Failed to fetch calendar events:", err);
   }
 }
 
+async function refreshActionHistory() {
+  if (!firebaseUid) return;
+
+  try {
+    const actions = await fetchActionHistory(firebaseUid);
+    renderActionHistory(actions);
+  } catch (err) {
+    console.warn("Failed to fetch action history:", err);
+  }
+}
+
+async function refreshAll() {
+  await Promise.all([refreshCalendarEvents(), refreshActionHistory()]);
+}
+
 function startPeriodicRefresh() {
   stopPeriodicRefresh();
   // Refresh every 2 minutes
-  refreshInterval = setInterval(() => fetchCalendarEvents(), 120000);
+  refreshInterval = setInterval(() => refreshAll(), 120000);
 }
 
 function stopPeriodicRefresh() {
@@ -144,64 +132,6 @@ function stopPeriodicRefresh() {
     clearInterval(refreshInterval);
     refreshInterval = null;
   }
-}
-
-// ─── Firestore Listeners ───
-
-function startListeners() {
-  if (!firebaseUid) return;
-  stopListeners();
-
-  // Listen for agent-created events → show instantly + toast
-  unsubEvents = onEventsChanged(firebaseUid, (evts) => {
-    if (agentEvents.length > 0 && evts.length > previousAgentEventCount) {
-      const newest = evts[0];
-      showToast(
-        `New event: ${newest.title || newest.eventTitle || "Untitled"}`,
-      );
-      // Also refresh from Google Calendar to get full data
-      fetchCalendarEvents();
-    }
-    previousAgentEventCount = evts.length;
-    agentEvents = evts;
-  });
-
-  unsubHistory = onActionHistoryChanged(firebaseUid, (actions) => {
-    renderActionHistory(actions);
-  });
-}
-
-function stopListeners() {
-  if (unsubEvents) {
-    unsubEvents();
-    unsubEvents = null;
-  }
-  if (unsubHistory) {
-    unsubHistory();
-    unsubHistory = null;
-  }
-}
-
-// ─── Merge Events ───
-// Combine Google Calendar events with agent events, remove duplicates
-
-function getMergedEvents() {
-  // Start with Google Calendar events
-  const merged = [...calendarEvents];
-
-  // Add agent events that aren't already in Google Calendar
-  agentEvents.forEach((agentEvt) => {
-    const eventId = agentEvt.eventId || agentEvt.googleEventId;
-    if (eventId && merged.some((e) => e.id === eventId)) return; // Already in list
-    merged.push({
-      id: agentEvt.id,
-      title: agentEvt.title || agentEvt.eventTitle || "Untitled",
-      startTime: agentEvt.startTime || agentEvt.createdAt,
-      source: "agent",
-    });
-  });
-
-  return merged;
 }
 
 // ─── Tabs ───
@@ -262,7 +192,7 @@ btnPrevMonth.addEventListener("click", () => {
   }
   renderCalendar();
   renderEventsForDate(selectedDate);
-  fetchCalendarEvents(); // Fetch events for new month
+  refreshCalendarEvents(); // Fetch events for new month
 });
 
 btnNextMonth.addEventListener("click", () => {
@@ -273,7 +203,7 @@ btnNextMonth.addEventListener("click", () => {
   }
   renderCalendar();
   renderEventsForDate(selectedDate);
-  fetchCalendarEvents(); // Fetch events for new month
+  refreshCalendarEvents(); // Fetch events for new month
 });
 
 function renderCalendar() {
@@ -343,7 +273,7 @@ function createDayEl(
 }
 
 function dateHasEvents(year, month, day) {
-  const allEvents = getMergedEvents();
+  const allEvents = calendarEvents;
   return allEvents.some((evt) => {
     const raw = evt.startTime;
     if (!raw) return false;
@@ -378,7 +308,7 @@ function renderEventsForDate(date) {
   const dayEnd = new Date(date);
   dayEnd.setHours(23, 59, 59, 999);
 
-  const allEvents = getMergedEvents();
+  const allEvents = calendarEvents;
   const dayEvents = allEvents.filter((evt) => {
     const raw = evt.startTime;
     if (!raw) return false;
@@ -429,6 +359,14 @@ function renderActionHistory(actions) {
     return;
   }
 
+  // Find the latest action that hasn't been rolled back
+  const latestUndoable = actions.find((a) => !a.alreadyRolledBack);
+  // Check if it's within 1 hour
+  const isWithinOneHour = latestUndoable && (() => {
+    const created = new Date(latestUndoable.createdAt);
+    return (Date.now() - created.getTime()) < 60 * 60 * 1000;
+  })();
+
   historyList.innerHTML = "";
   actions.forEach((action) => {
     const raw = action.createdAt;
@@ -449,18 +387,42 @@ function renderActionHistory(actions) {
             ? "Deleted"
             : action.actionType || "Action";
 
+    const canUndo = isWithinOneHour && latestUndoable && action.id === latestUndoable.id;
+
     const item = document.createElement("div");
     item.className = "history-item";
     item.innerHTML = `
       <div class="event-time-bar"></div>
-      <div>
+      <div class="flex-1">
         <div class="text-sm font-medium text-white/90">${escapeHtml(actionLabel)}: ${escapeHtml(action.eventTitle || "")}</div>
-        <div class="text-xs text-white/50">${action.alreadyRollBack ? "Rolled back" : ""}</div>
+        <div class="text-xs text-white/50">${action.alreadyRolledBack ? "Rolled back" : ""}</div>
         <div class="text-xs text-white/30 mt-1">${timeStr}</div>
       </div>
+      ${canUndo ? `<button class="undo-btn text-xs px-2 py-1 rounded bg-white/10 hover:bg-white/20 text-white/70 hover:text-white transition-colors whitespace-nowrap" data-action-id="${action.id}" data-event-id="${action.eventId}">Undo</button>` : ""}
     `;
+
+    if (canUndo) {
+      const btn = item.querySelector(".undo-btn");
+      btn.addEventListener("click", () => handleUndo(action.id, action.eventId, btn));
+    }
+
     historyList.appendChild(item);
   });
+}
+
+async function handleUndo(actionId, eventId, btn) {
+  btn.disabled = true;
+  btn.textContent = "Undoing...";
+
+  try {
+    const result = await rollbackAction(actionId, eventId);
+    showToast(result.message || "Action undone successfully");
+    refreshAll();
+  } catch (err) {
+    showToast(`Undo failed: ${err.message}`);
+    btn.disabled = false;
+    btn.textContent = "Undo";
+  }
 }
 
 // ─── Toast ───

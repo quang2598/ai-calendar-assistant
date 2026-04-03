@@ -1,9 +1,9 @@
 import { config } from "../config.js";
-import { signInWithGoogle, signOut, connectCalendar, isCalendarConnected, getAuthState } from "../shared/auth.js";
-import { addConversationMessage } from "../shared/firestore.js";
 import { sendChat } from "../shared/agent.js";
+import { getAuthState, isCalendarConnected, signOut } from "../shared/auth.js";
+import { addConversationMessage } from "../shared/backend.js";
 import { getCurrentPosition } from "../shared/geo.js";
-import { sendMessage, onMessage } from "../shared/messages.js";
+import { onMessage, sendMessage } from "../shared/messages.js";
 import { speakText, stopSpeaking } from "../shared/tts.js";
 
 // ─── DOM Elements ───
@@ -55,7 +55,9 @@ let usedVoiceInput = false;
   }
 
   // Check if opened via wake word
-  const { wakeWordTriggered } = await chrome.storage.local.get(["wakeWordTriggered"]);
+  const { wakeWordTriggered } = await chrome.storage.local.get([
+    "wakeWordTriggered",
+  ]);
   if (wakeWordTriggered) {
     await chrome.storage.local.remove(["wakeWordTriggered"]);
     if (stored.authToken) {
@@ -112,7 +114,12 @@ async function updateCalendarButton() {
   } else {
     calendarBtnText.textContent = "Reconnect Google Calendar";
     btnConnectCalendar.classList.add("border-amber-400/30", "text-amber-400");
-    btnConnectCalendar.classList.remove("border-cyan-500/20", "text-cyan-400", "border-green-400/30", "text-green-400");
+    btnConnectCalendar.classList.remove(
+      "border-cyan-500/20",
+      "text-cyan-400",
+      "border-green-400/30",
+      "text-green-400",
+    );
     btnConnectCalendar.disabled = false;
   }
 }
@@ -157,21 +164,29 @@ async function handleSend() {
 
   // Append geolocation to message for agent context (best-effort)
   let messageToAgent = text;
+  let userLocation = null;
   try {
     const pos = await getCurrentPosition();
     if (pos) {
-      messageToAgent = `${text}\n[user_location: lat=${pos.lat}, lng=${pos.lng}]`;
+      userLocation = { latitude: pos.lat, longitude: pos.lng };
     }
   } catch {}
 
   try {
-    const result = await sendChat(firebaseUid, conversationId, messageToAgent);
+    const result = await sendChat(
+      firebaseUid,
+      conversationId,
+      messageToAgent,
+      userLocation,
+    );
     conversationId = result.conversationId;
 
     hideThinking();
 
     // Save system response to Firestore
-    addConversationMessage(firebaseUid, "system", result.text).catch(console.error);
+    addConversationMessage(firebaseUid, "system", result.text).catch(
+      console.error,
+    );
 
     // Show typing effect and speak simultaneously if voice was used
     if (wasVoice) {
@@ -227,7 +242,8 @@ function toggleVoice() {
 }
 
 async function startVoiceInput() {
-  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const SpeechRecognition =
+    window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SpeechRecognition) {
     showSystemMessage("Speech recognition not supported.");
     return;
@@ -278,7 +294,11 @@ async function startVoiceInput() {
 
   recognition.onend = () => {
     if (isListening) {
-      try { recognition.start(); } catch { stopVoiceInput(); }
+      try {
+        recognition.start();
+      } catch {
+        stopVoiceInput();
+      }
     }
   };
 

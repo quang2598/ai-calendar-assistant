@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-const ALLOWED_ORIGIN = "chrome-extension://fchfikhojhankgddpfamopeefigddpdh";
+const ALLOWED_ORIGIN = "chrome-extension://jgnbhhkoeedfncdgeimnpnimlfnfpfcj";
 
 export function middleware(request: NextRequest) {
   const origin = request.headers.get("origin");

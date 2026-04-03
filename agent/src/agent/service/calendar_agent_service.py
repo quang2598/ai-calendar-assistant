@@ -4,32 +4,40 @@ import os
 from contextvars import ContextVar
 from typing import List, Optional
 
+from agent.prompt import build_system_prompt
+from agent.tools import build_calendar_tools, build_location_tools
+from config.agent_config import agent_settings
+from dto import SendChatRequest, SendChatResponse
 from langchain.agents import create_agent
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langchain_ollama import ChatOllama
 from langchain_openai import ChatOpenAI
 from loguru import logger
-
+from utility import (
+    ConversationMessage,
+    get_user_calendar_timezone,
+    load_agent_history_messages,
+)
 from utility.tracing_utils import trace_span
-from config.agent_config import agent_settings
-from agent.prompt import build_system_prompt
-from dto import SendChatRequest, SendChatResponse
-from utility import ConversationMessage, get_user_calendar_timezone, load_agent_history_messages
-from agent.tools import build_calendar_tools, build_location_tools
 
 # Request-scoped context for timezone caching to avoid redundant Google Calendar API calls
-_request_timezone_cache: ContextVar[str] = ContextVar("request_timezone_cache", default="")
+_request_timezone_cache: ContextVar[str] = ContextVar(
+    "request_timezone_cache", default=""
+)
 
 
-
-def _map_role_to_langchain_message(message: ConversationMessage) -> BaseMessage | None:
+def _map_role_to_langchain_message(
+    message: ConversationMessage,
+) -> BaseMessage | None:
     role = message.role.strip().lower()
     if role in {"user", "human"}:
         return HumanMessage(content=message.text)
     if role == "system":
         return AIMessage(content=message.text)
 
-    logger.warning("Skipping unsupported message role in history: {}", message.role)
+    logger.warning(
+        "Skipping unsupported message role in history: {}", message.role
+    )
     return None
 
 
@@ -44,18 +52,24 @@ def _get_cached_timezone(uid: str) -> Optional[str]:
     if cached:
         logger.debug("Using cached timezone for request: {}", cached)
         return cached
-    
+
     # Not in cache, fetch from Google Calendar
     try:
         user_timezone = get_user_calendar_timezone(uid=uid)
         if user_timezone and user_timezone.strip().lower() != "unknown":
             _set_request_timezone(user_timezone)
-            logger.info("Retrieved and cached user timezone from Google Calendar: {}", user_timezone)
+            logger.info(
+                "Retrieved and cached user timezone from Google Calendar: {}",
+                user_timezone,
+            )
             return user_timezone
     except Exception as exc:
-        logger.warning("Failed to retrieve user timezone from Google Calendar: {}", exc)
-    
+        logger.warning(
+            "Failed to retrieve user timezone from Google Calendar: {}", exc
+        )
+
     return None
+
 
 def _build_llm():
     if os.getenv("VERCEL_OIDC_TOKEN"):
@@ -102,20 +116,24 @@ def build_langchain_history_messages(
 
 
 @trace_span("build_calendar_agent")
-def build_calendar_agent(uid: str, user_timezone: str, user_location: Optional[tuple[float, float]] = None):
+def build_calendar_agent(
+    uid: str,
+    user_timezone: str,
+    user_location: Optional[tuple[float, float]] = None,
+):
     """Build a calendar agent that can handle calendar operations, location-based services, and general conversations.
-    
+
     Args:
         uid: User ID for calendar operations
         user_timezone: User's timezone for proper time handling
         user_location: User's geolocation as (latitude, longitude) tuple from browser geolocation API
-        
+
     Returns:
         A calendar agent instance
     """
     # Build calendar tools
     calendar_tools = build_calendar_tools(uid=uid)
-    
+
     # Build location tools if API key is available
     location_tools = []
     if agent_settings.google_places_api_key:
@@ -126,11 +144,13 @@ def build_calendar_agent(uid: str, user_timezone: str, user_location: Optional[t
             )
         except ValueError as exc:
             logger.warning("Could not build location tools: {}", exc)
-    
+
     # Combine all tools
     all_tools = calendar_tools + location_tools
-    
-    system_prompt = build_system_prompt(user_timezone=user_timezone, user_location=user_location)
+
+    system_prompt = build_system_prompt(
+        user_timezone=user_timezone, user_location=user_location
+    )
     llm = _build_llm()
 
     agent = create_agent(
@@ -150,25 +170,27 @@ def invoke_calendar_agent(
     user_location: Optional[tuple[float, float]] = None,
 ) -> str:
     """Invoke the calendar agent to handle user messages.
-    
+
     The agent can handle both calendar-related queries and general conversation
     using detailed system prompts for proper behavior.
-    
+
     Args:
         uid: User ID
         user_timezone: User's timezone for proper time handling
         user_message: The user's message
         chat_history: Previous messages in the conversation
         user_location: User's geolocation as (latitude, longitude) tuple
-        
+
     Returns:
         The agent's response
     """
-    agent = build_calendar_agent(uid=uid, user_timezone=user_timezone, user_location=user_location)
-    
+    agent = build_calendar_agent(
+        uid=uid, user_timezone=user_timezone, user_location=user_location
+    )
+
     # Build messages list for the new API
     messages = list(chat_history) + [HumanMessage(content=user_message)]
-    
+
     result = agent.invoke(
         {
             "messages": messages,
@@ -177,7 +199,7 @@ def invoke_calendar_agent(
 
     # The new create_agent API returns various formats
     output = ""
-    
+
     # If it's a BaseMessage, extract content
     if isinstance(result, BaseMessage):
         output = str(result.content or "").strip()
@@ -196,43 +218,50 @@ def invoke_calendar_agent(
         output = str(output or "").strip()
     else:
         output = str(result or "").strip()
-    
+
     if not output:
         raise RuntimeError("Agent returned an empty response.")
     return output
 
 
 @trace_span("run_calendar_agent_turn")
-def run_calendar_agent_turn(payload: SendChatRequest, uid: str) -> SendChatResponse:
+def run_calendar_agent_turn(
+    payload: SendChatRequest, uid: str
+) -> SendChatResponse:
     # uid is already verified by Firebase middleware, no need to re-verify
     if not uid:
         raise ValueError("Token missing uid claim")
-    
+
     history = load_agent_history_messages(
         uid=uid,
         conversation_id=payload.conversationId,
         latest_user_message=payload.message,
     )
     langchain_history = build_langchain_history_messages(history=history)
-    
+
     # Limit to 6 most recent messages (3 user + 3 agent)
     if len(langchain_history) > 6:
         langchain_history = langchain_history[-6:]
-    
+    logger.info("payload: {}", payload)
     # Extract user location from request if available
     user_location = None
     if payload.userLocation:
-        user_location = (payload.userLocation.latitude, payload.userLocation.longitude)
+        user_location = (
+            payload.userLocation.latitude,
+            payload.userLocation.longitude,
+        )
 
-    
     # Try to get user's timezone from Google Calendar settings
     # This is the primary source of truth for user's timezone
     user_timezone = _get_cached_timezone(uid=uid)
-    
+
     # If we couldn't get timezone from Google Calendar, use fallback
     if not user_timezone or user_timezone.strip().lower() == "unknown":
         user_timezone = agent_settings.calendar_default_timezone
-        logger.info("User timezone not found from Google Calendar; using fallback: {}", user_timezone)
+        logger.info(
+            "User timezone not found from Google Calendar; using fallback: {}",
+            user_timezone,
+        )
     else:
         # Cache it for subsequent tool calls
         _set_request_timezone(user_timezone)
@@ -243,7 +272,11 @@ def run_calendar_agent_turn(payload: SendChatRequest, uid: str) -> SendChatRespo
         chat_history=langchain_history,
         user_location=user_location,
     )
-    logger.info("Agent processing with timezone: {}, user_location: {}", user_timezone, user_location)
+    logger.info(
+        "Agent processing with timezone: {}, user_location: {}",
+        user_timezone,
+        user_location,
+    )
 
     if _looks_like_internal_protocol_leak(output_text):
         logger.warning(

@@ -129,6 +129,33 @@ const chatSlice = createSlice({
       state.messagesStatusByConversationId[conversationId] = "failed";
       state.messagesErrorByConversationId[conversationId] = error;
     },
+    streamingChunkReceived(
+      state,
+      action: PayloadAction<{
+        conversationId: string;
+        text: string;
+      }>,
+    ) {
+      const { conversationId, text } = action.payload;
+      if (!state.messagesByConversationId[conversationId]) {
+        state.messagesByConversationId[conversationId] = [];
+      }
+
+      const messages = state.messagesByConversationId[conversationId];
+      const lastMessage = messages[messages.length - 1];
+
+      // Append to existing streaming message or create a new one
+      if (lastMessage && lastMessage.id.startsWith("streaming-")) {
+        lastMessage.text += text;
+      } else {
+        messages.push({
+          id: `streaming-${Date.now()}`,
+          role: "system",
+          text,
+          createdAtMs: Date.now(),
+        });
+      }
+    },
     resetChat() {
       return initialState;
     },
@@ -151,6 +178,7 @@ export const {
   setComposerText,
   setActiveConversation,
   startNewConversationDraft,
+  streamingChunkReceived,
 } = chatSlice.actions;
 
 export default chatSlice.reducer;

@@ -8,7 +8,7 @@ import { auth } from "./firebase.js";
  * @param {string} message
  * @returns {Promise<{ text: string, conversationId: string }>}
  */
-export async function sendChat(uid, conversationId, message) {
+export async function sendChat(uid, conversationId, message, userLocation) {
   // Get Firebase ID token for backend auth
   const idToken = await auth.currentUser?.getIdToken();
   if (!idToken) throw new Error("Not authenticated. Please sign in again.");
@@ -17,9 +17,9 @@ export async function sendChat(uid, conversationId, message) {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "Authorization": `Bearer ${idToken}`,
+      Authorization: `Bearer ${idToken}`,
     },
-    body: JSON.stringify({ uid, conversationId, message }),
+    body: JSON.stringify({ uid, conversationId, message, userLocation }),
   });
 
   if (!res.ok) {

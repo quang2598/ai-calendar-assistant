@@ -1,5 +1,7 @@
 import os
 from utility import setup_logging
+import json
+
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -169,7 +171,6 @@ async def rollback_event(request: Request) -> dict:
         result = _rollback_event_impl(uid=uid, event_id=event_id, calendar_id=calendar_id)
         
         # Parse the JSON response from the tool
-        import json
         try:
             result_dict = json.loads(result)
             
