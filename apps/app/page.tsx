@@ -218,8 +218,10 @@ function HomePageContent() {
       : null;
 
     if (inputModeRef.current === "voice") {
-      // Voice mode: hide new messages until audio+reveal starts
-      setWaitingRef.current(true);
+      // Hide the next system message before it arrives (prevents flash)
+      // Pass current message IDs so only NEW messages get hidden
+      const currentIds = activeMessages.map((m) => m.id);
+      setWaitingRef.current(true, undefined, currentIds);
       let fullText = "";
       void dispatch(
         sendComposerMessageStreaming({
@@ -230,6 +232,9 @@ function HomePageContent() {
               fullText += chunk.text;
             } else if (chunk.type === "done") {
               const messageId = chunk.messageId;
+              if (messageId) {
+                setWaitingRef.current(true, messageId);
+              }
               if (fullText.trim()) {
                 speakRef.current(fullText, {
                   onPlaybackStart: (durationMs) => {
@@ -249,8 +254,9 @@ function HomePageContent() {
         }),
       );
     } else {
-      // Text mode: hide new messages until typing reveal starts
-      setWaitingRef.current(true);
+      // Hide the next system message before it arrives (prevents flash)
+      const currentIds = activeMessages.map((m) => m.id);
+      setWaitingRef.current(true, undefined, currentIds);
       let fullText = "";
       void dispatch(
         sendComposerMessageStreaming({
@@ -261,6 +267,9 @@ function HomePageContent() {
               fullText += chunk.text;
             } else if (chunk.type === "done") {
               const messageId = chunk.messageId;
+              if (messageId) {
+                setWaitingRef.current(true, messageId);
+              }
               if (messageId && fullText.trim()) {
                 startRevealRef.current(messageId, fullText);
               }

@@ -11,8 +11,8 @@ type RevealState = {
 type UseTextRevealReturn = {
   getVisibleText: (messageId: string, fullText: string) => string;
   isRevealing: (messageId: string) => boolean;
-  /** Block all new system messages from showing until reveal starts */
-  setWaitingForReveal: (waiting: boolean) => void;
+  /** Hide the next new system message until reveal starts (prevents flash) */
+  setWaitingForReveal: (waiting: boolean, messageId?: string, knownIds?: string[]) => void;
   /** Start character-by-character reveal with variable speed (like the extension) */
   startReveal: (messageId: string, fullText: string) => void;
   /** Start reveal synced to audio duration */
@@ -25,7 +25,9 @@ const revealedMessagesSet = new Set<string>();
 
 export function useTextReveal(): UseTextRevealReturn {
   const [revealState, setRevealState] = useState<RevealState | null>(null);
-  const [waitingForReveal, setWaitingForRevealState] = useState(false);
+  const [hiddenMessageId, setHiddenMessageId] = useState<string | null>(null);
+  // Track which message IDs existed before pending mode was set
+  const knownMessageIdsRef = useRef<Set<string>>(new Set());
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const cancelledRef = useRef(false);
 
@@ -40,11 +42,19 @@ export function useTextReveal(): UseTextRevealReturn {
   const stopReveal = useCallback(() => {
     clearTimer();
     setRevealState(null);
-    setWaitingForRevealState(false);
+    setHiddenMessageId(null);
   }, [clearTimer]);
 
-  const setWaitingForReveal = useCallback((waiting: boolean) => {
-    setWaitingForRevealState(waiting);
+  const setWaitingForReveal = useCallback((waiting: boolean, messageId?: string, knownIds?: string[]) => {
+    if (waiting) {
+      if (knownIds) {
+        knownMessageIdsRef.current = new Set(knownIds);
+      }
+      setHiddenMessageId(messageId ?? "__pending__");
+    } else {
+      knownMessageIdsRef.current.clear();
+      setHiddenMessageId(null);
+    }
   }, []);
 
   const markComplete = useCallback((messageId: string) => {
@@ -57,7 +67,7 @@ export function useTextReveal(): UseTextRevealReturn {
     (messageId: string, fullText: string) => {
       clearTimer();
       cancelledRef.current = false;
-      setWaitingForRevealState(false);
+      setHiddenMessageId(null);
 
       if (!fullText) return;
       if (revealedMessagesSet.has(messageId)) return; // Already revealed
@@ -98,7 +108,7 @@ export function useTextReveal(): UseTextRevealReturn {
     (messageId: string, fullText: string, durationMs: number) => {
       clearTimer();
       cancelledRef.current = false;
-      setWaitingForRevealState(false);
+      setHiddenMessageId(null);
 
       if (!fullText) return;
       if (revealedMessagesSet.has(messageId)) return;
@@ -145,15 +155,19 @@ export function useTextReveal(): UseTextRevealReturn {
         return fullText;
       }
 
-      // Waiting for reveal to start (voice mode: audio being fetched)
-      // Hide any new system message to prevent flash
-      if (waitingForReveal) {
+      // Hide specific message by ID
+      if (hiddenMessageId === messageId) {
+        return "";
+      }
+
+      // Pending mode: hide any NEW message (not known before pending was set)
+      if (hiddenMessageId === "__pending__" && !knownMessageIdsRef.current.has(messageId)) {
         return "";
       }
 
       return fullText;
     },
-    [revealState, waitingForReveal],
+    [revealState, hiddenMessageId],
   );
 
   const isRevealing = useCallback(
