@@ -1,7 +1,11 @@
 export type AgentChatRequest = {
-  uid: string;
   conversationId: string;
   message: string;
+  userLocation?: {
+    latitude: number;
+    longitude: number;
+    accuracy?: number;
+  } | null;
 };
 
 export type AgentChatResponse = {
@@ -78,11 +82,13 @@ function parseAgentChatResponse(data: unknown): AgentChatResponse {
 
 export async function requestAgentChatResponse(
   payload: AgentChatRequest,
+  firebaseIdToken: string,
 ): Promise<AgentChatResponse> {
   const response = await fetch(getAgentChatUrl(), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
+      Authorization: `Bearer ${firebaseIdToken}`,
     },
     cache: "no-store",
     body: JSON.stringify(payload),
@@ -98,7 +104,9 @@ export async function requestAgentChatResponse(
     }
 
     const code =
-      typeof body?.error?.code === "string" ? body.error.code : "AGENT_CHAT_REQUEST_FAILED";
+      typeof body?.error?.code === "string"
+        ? body.error.code
+        : "AGENT_CHAT_REQUEST_FAILED";
     const message =
       typeof body?.error?.message === "string"
         ? body.error.message

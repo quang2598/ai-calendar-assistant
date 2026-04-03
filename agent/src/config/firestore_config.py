@@ -6,7 +6,7 @@ import firebase_admin
 from firebase_admin import credentials, firestore
 from google.cloud.firestore import Client as FirestoreClient
 from loguru import logger
-from .tracing_config import trace_span
+from utility.tracing_utils import trace_span
 
 firestore_db = None
 _firestore_app = None

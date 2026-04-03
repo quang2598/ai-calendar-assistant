@@ -1,5 +1,4 @@
 from __future__ import annotations
-
 from pydantic import Field, ValidationError, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from loguru import logger
@@ -69,6 +68,11 @@ class AgentSettings(BaseSettings):
         ge=60,
         le=3600,
         alias="GOOGLE_OAUTH_ACCESS_TOKEN_TTL_SECONDS",
+    )
+
+    google_places_api_key: str = Field(
+        default="",
+        alias="GOOGLE_PLACES_API_KEY",
     )
 
     @field_validator(

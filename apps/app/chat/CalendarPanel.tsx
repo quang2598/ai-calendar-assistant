@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useCallback } from "react";
+import { useEffect, useCallback, useState } from "react";
+import { auth } from "@/src/lib/firebase";
 
 import {
   selectCalendarEvents,
@@ -20,13 +21,24 @@ import {
 import type { CalendarEvent } from "@/src/features/calendar/calendarSlice";
 import { fetchCalendarEvents } from "@/src/features/calendar/calendarThunks";
 import { useAppDispatch, useAppSelector } from "@/src/hooks";
+import HistoryPanel from "./HistoryPanel";
 
 // ── Helpers ──────────────────────────────────────────────
 
 const DAYS = ["S", "M", "T", "W", "T", "F", "S"];
 const MONTH_NAMES = [
-  "January", "February", "March", "April", "May", "June",
-  "July", "August", "September", "October", "November", "December",
+  "January",
+  "February",
+  "March",
+  "April",
+  "May",
+  "June",
+  "July",
+  "August",
+  "September",
+  "October",
+  "November",
+  "December",
 ];
 
 function getDaysInMonth(year: number, month: number): number {
@@ -90,8 +102,19 @@ function MiniCalendar({
           className="rounded p-1 text-slate-400 transition hover:bg-slate-800 hover:text-slate-200"
           aria-label="Previous month"
         >
-          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="h-4 w-4">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" />
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            fill="none"
+            viewBox="0 0 24 24"
+            strokeWidth={2}
+            stroke="currentColor"
+            className="h-4 w-4"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              d="M15.75 19.5 8.25 12l7.5-7.5"
+            />
           </svg>
         </button>
         <span className="text-sm font-medium text-slate-200">
@@ -103,8 +126,19 @@ function MiniCalendar({
           className="rounded p-1 text-slate-400 transition hover:bg-slate-800 hover:text-slate-200"
           aria-label="Next month"
         >
-          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="h-4 w-4">
-            <path strokeLinecap="round" strokeLinejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" />
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            fill="none"
+            viewBox="0 0 24 24"
+            strokeWidth={2}
+            stroke="currentColor"
+            className="h-4 w-4"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              d="m8.25 4.5 7.5 7.5-7.5 7.5"
+            />
           </svg>
         </button>
       </div>
@@ -112,7 +146,9 @@ function MiniCalendar({
       {/* Day-of-week headers */}
       <div className="mb-1 grid grid-cols-7 text-center text-[11px] font-medium text-slate-500">
         {DAYS.map((d, i) => (
-          <div key={`${d}-${i}`} className="py-1">{d}</div>
+          <div key={`${d}-${i}`} className="py-1">
+            {d}
+          </div>
         ))}
       </div>
 
@@ -189,7 +225,9 @@ function EventList({
         )}
 
         {status === "succeeded" && events.length === 0 && (
-          <p className="px-1 py-3 text-xs text-slate-500">No events for this day.</p>
+          <p className="px-1 py-3 text-xs text-slate-500">
+            No events for this day.
+          </p>
         )}
 
         {status === "succeeded" && events.length > 0 && (
@@ -200,7 +238,7 @@ function EventList({
                 className="rounded-lg border border-slate-800 bg-slate-900/60 px-3 py-2 transition hover:border-slate-700"
               >
                 <div className="flex items-start gap-2">
-                  <div className="mt-0.5 h-2 w-2 flex-shrink-0 rounded-full bg-cyan-400" />
+                  <div className="mt-0.5 h-2 w-2 shrink-0 rounded-full bg-cyan-400" />
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-medium text-slate-200">
                       {event.title}
@@ -228,7 +266,7 @@ function EventList({
 
 // ── CalendarPanel ────────────────────────────────────────
 
-export default function CalendarPanel() {
+function CalendarContent() {
   const dispatch = useAppDispatch();
   const isOpen = useAppSelector(selectIsCalendarOpen);
   const selectedDate = useAppSelector(selectSelectedDate);
@@ -265,8 +303,68 @@ export default function CalendarPanel() {
   }, [dispatch, viewMonth, viewYear]);
 
   return (
+    <>
+      <MiniCalendar
+        viewMonth={viewMonth}
+        viewYear={viewYear}
+        selectedDate={selectedDate}
+        onSelectDate={handleSelectDate}
+        onPrevMonth={handlePrevMonth}
+        onNextMonth={handleNextMonth}
+      />
+
+      <EventList
+        events={events}
+        status={eventsStatus}
+        error={eventsError}
+        selectedDate={selectedDate}
+      />
+    </>
+  );
+}
+
+export default function CalendarPanel() {
+  const isOpen = useAppSelector(selectIsCalendarOpen);
+  const dispatch = useAppDispatch();
+  const [activeTab, setActiveTab] = useState<"event" | "history">("event");
+  const [uid, setUid] = useState<string | null>(null);
+  const [idToken, setIdToken] = useState<string | null>(null);
+
+  // Get the current user's uid and idToken when component mounts
+  useEffect(() => {
+    const user = auth.currentUser;
+    if (user) {
+      setUid(user.uid);
+      user
+        .getIdToken()
+        .then(setIdToken)
+        .catch(() => {
+          console.error("Failed to get ID token");
+        });
+    }
+
+    // Re-get token when auth state changes or periodically
+    const unsubscribe = auth.onAuthStateChanged(async (user) => {
+      if (user) {
+        setUid(user.uid);
+        try {
+          const token = await user.getIdToken();
+          setIdToken(token);
+        } catch {
+          console.error("Failed to get ID token");
+        }
+      } else {
+        setUid(null);
+        setIdToken(null);
+      }
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  return (
     <aside
-      className={`relative hidden flex-shrink-0 flex-col border-l border-slate-800/90 bg-slate-900/80 transition-all duration-300 lg:flex ${
+      className={`relative hidden shrink-0 flex-col border-l border-slate-800/90 bg-slate-900/80 transition-all duration-300 lg:flex ${
         isOpen ? "w-80" : "w-10"
       }`}
     >
@@ -287,7 +385,11 @@ export default function CalendarPanel() {
             stroke="currentColor"
             className="h-5 w-5"
           >
-            <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" />
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              d="M15.75 19.5 8.25 12l7.5-7.5"
+            />
           </svg>
         </button>
       )}
@@ -295,8 +397,34 @@ export default function CalendarPanel() {
       {/* Expanded panel */}
       {isOpen && (
         <>
+          {/* Header with tabs */}
           <header className="flex h-16 items-center justify-between border-b border-slate-800/80 bg-slate-950/70 px-4">
-            <h2 className="text-sm font-semibold text-slate-200">Your Calendar</h2>
+            <div className="flex items-center gap-4 flex-1">
+              <div className="flex gap-2 flex-1">
+                <button
+                  type="button"
+                  onClick={() => setActiveTab("event")}
+                  className={`px-3 py-1 text-sm font-medium rounded transition ${
+                    activeTab === "event"
+                      ? "bg-cyan-500/20 text-cyan-300 border border-cyan-400/50"
+                      : "text-slate-400 hover:text-slate-200"
+                  }`}
+                >
+                  Event
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab("history")}
+                  className={`px-3 py-1 text-sm font-medium rounded transition ${
+                    activeTab === "history"
+                      ? "bg-cyan-500/20 text-cyan-300 border border-cyan-400/50"
+                      : "text-slate-400 hover:text-slate-200"
+                  }`}
+                >
+                  History
+                </button>
+              </div>
+            </div>
             <button
               type="button"
               onClick={() => dispatch(toggleCalendar())}
@@ -312,26 +440,22 @@ export default function CalendarPanel() {
                 stroke="currentColor"
                 className="h-5 w-5"
               >
-                <path strokeLinecap="round" strokeLinejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" />
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="m8.25 4.5 7.5 7.5-7.5 7.5"
+                />
               </svg>
             </button>
           </header>
 
-          <MiniCalendar
-            viewMonth={viewMonth}
-            viewYear={viewYear}
-            selectedDate={selectedDate}
-            onSelectDate={handleSelectDate}
-            onPrevMonth={handlePrevMonth}
-            onNextMonth={handleNextMonth}
-          />
-
-          <EventList
-            events={events}
-            status={eventsStatus}
-            error={eventsError}
-            selectedDate={selectedDate}
-          />
+          {/* Tab content */}
+          <div className="flex flex-1 flex-col overflow-hidden">
+            {activeTab === "event" && <CalendarContent />}
+            {activeTab === "history" && (
+              <HistoryPanel uid={uid} idToken={idToken} />
+            )}
+          </div>
         </>
       )}
     </aside>

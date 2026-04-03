@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useSearchParams } from "next/navigation";
-import { Suspense,  useEffect, useState, useCallback, useRef } from "react";
+import { Suspense, useEffect, useState, useCallback, useRef } from "react";
 
 import ChatShell from "@/app/chat/ChatShell";
 import { auth } from "@/src/lib/firebase";
@@ -42,6 +42,7 @@ import {
   stopChatListeners,
 } from "@/src/features/chat/chatThunks";
 import { useAppDispatch, useAppSelector } from "@/src/hooks";
+import { useGeolocation } from "@/src/hooks/useGeolocation";
 import { useSpeechRecognition } from "@/src/hooks/useSpeechRecognition";
 import { useSpeechSynthesis } from "@/src/hooks/useSpeechSynthesis";
 import { useAudioVisualizer } from "@/src/hooks/useAudioVisualizer";
@@ -59,7 +60,12 @@ function HomePageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [isConnectingCalendar, setIsConnectingCalendar] = useState(false);
-  const [calendarConnectError, setCalendarConnectError] = useState<string | null>(null);
+  const [calendarConnectError, setCalendarConnectError] = useState<
+    string | null
+  >(null);
+
+  // Request user's geolocation for location-based service lookups
+  const { coordinates: userLocation } = useGeolocation(true, false);
 
   const initialized = useAppSelector(selectAuthInitialized);
   const isAuthenticated = useAppSelector(selectIsAuthenticated);
@@ -71,8 +77,12 @@ function HomePageContent() {
   const activeConversationId = useAppSelector(selectActiveConversationId);
   const activeConversation = useAppSelector(selectActiveConversation);
   const activeMessages = useAppSelector(selectActiveConversationMessages);
-  const activeMessagesStatus = useAppSelector(selectActiveConversationMessagesStatus);
-  const activeMessagesError = useAppSelector(selectActiveConversationMessagesError);
+  const activeMessagesStatus = useAppSelector(
+    selectActiveConversationMessagesStatus,
+  );
+  const activeMessagesError = useAppSelector(
+    selectActiveConversationMessagesError,
+  );
   const composerText = useAppSelector(selectComposerText);
   const sendingError = useAppSelector(selectSendingError);
   const isSendingMessage = useAppSelector(selectIsSendingMessage);
@@ -85,10 +95,20 @@ function HomePageContent() {
     [dispatch],
   );
 
-  const { isListening, isSupported: isVoiceSupported, startListening, stopListening, error: voiceError } =
-    useSpeechRecognition(handleVoiceTranscript);
+  const {
+    isListening,
+    isSupported: isVoiceSupported,
+    startListening,
+    stopListening,
+    error: voiceError,
+  } = useSpeechRecognition(handleVoiceTranscript);
 
-  const { volume: micVolume, frequencies: micFrequencies, startVisualizer, stopVisualizer } = useAudioVisualizer();
+  const {
+    volume: micVolume,
+    frequencies: micFrequencies,
+    startVisualizer,
+    stopVisualizer,
+  } = useAudioVisualizer();
 
   function handleMicToggle() {
     if (isListening) {
@@ -176,7 +196,27 @@ function HomePageContent() {
   }
 
   function handleSendMessage() {
-    void dispatch(sendComposerMessage());
+    console.log(
+      "%c[DEBUG] handleSendMessage - userLocation status:",
+      "color: blue; font-weight: bold;",
+      {
+        hasLocation: !!userLocation,
+        coordinates: userLocation
+          ? { lat: userLocation.latitude, lng: userLocation.longitude }
+          : null,
+      },
+    );
+    void dispatch(
+      sendComposerMessage({
+        userLocation: userLocation
+          ? {
+              latitude: userLocation.latitude,
+              longitude: userLocation.longitude,
+              accuracy: userLocation.accuracy,
+            }
+          : null,
+      }),
+    );
   }
 
   async function handleConnectGoogleCalendar() {
@@ -191,13 +231,16 @@ function HomePageContent() {
 
     try {
       const idToken = await currentUser.getIdToken();
-      const response = await fetch("/api/integrations/google-calendar/connect", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${idToken}`,
-          "x-oauth-mode": "json",
+      const response = await fetch(
+        "/api/integrations/google-calendar/connect",
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${idToken}`,
+            "x-oauth-mode": "json",
+          },
         },
-      });
+      );
 
       if (!response.ok) {
         let message = "Could not start Google Calendar connection.";
@@ -215,13 +258,17 @@ function HomePageContent() {
 
       const payload = (await response.json()) as { url?: string };
       if (!payload.url) {
-        throw new Error("Connect endpoint did not return an authorization URL.");
+        throw new Error(
+          "Connect endpoint did not return an authorization URL.",
+        );
       }
 
       window.location.assign(payload.url);
     } catch (error) {
       const message =
-        error instanceof Error ? error.message : "Could not connect Google Calendar.";
+        error instanceof Error
+          ? error.message
+          : "Could not connect Google Calendar.";
       setCalendarConnectError(message);
       setIsConnectingCalendar(false);
     }
@@ -249,7 +296,9 @@ function HomePageContent() {
         : "Google Calendar connected successfully."
       : null;
   const callbackErrorMessage =
-    callbackStatus === "error" ? `Google Calendar connection failed: ${callbackCode}.` : null;
+    callbackStatus === "error"
+      ? `Google Calendar connection failed: ${callbackCode}.`
+      : null;
   const calendarErrorMessage = calendarConnectError ?? callbackErrorMessage;
 
   return (

@@ -6,6 +6,7 @@ pydantic==2.12.5
 pydantic-settings==2.13.1
 google-auth==2.49.1
 google-api-python-client==2.192.0
+googlemaps==4.10.0
 langchain-core==1.2.10
 langchain==1.2.13
 langchain-openai==1.0.0
@@ -13,4 +14,4 @@ langchain-ollama==1.0.1
 protobuf==4.25.8
 pytest==8.4.1
 pytest-cov==5.0.0
-pytz==2026.1
+tzdata>=2024.1

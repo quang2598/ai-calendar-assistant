@@ -21,7 +21,8 @@ type FirestoreErrorBody = {
 };
 
 const FIREBASE_PROJECT_ID =
-  process.env.FIREBASE_PROJECT_ID?.trim() || process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID?.trim();
+  process.env.FIREBASE_PROJECT_ID?.trim() ||
+  process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID?.trim();
 
 const FALLBACK_AGENT_RESPONSE_TEXT = "Something went wrong. Please try again";
 
@@ -75,7 +76,11 @@ function encodePathSegment(value: string): string {
 
 function buildAuthHeaders(idToken: string): HeadersInit {
   if (!idToken.trim()) {
-    throw new BackendChatError("Missing Firebase ID token.", "UNAUTHORIZED", 401);
+    throw new BackendChatError(
+      "Missing Firebase ID token.",
+      "UNAUTHORIZED",
+      401,
+    );
   }
 
   return {
@@ -84,7 +89,9 @@ function buildAuthHeaders(idToken: string): HeadersInit {
   };
 }
 
-async function parseErrorResponse(response: Response): Promise<BackendChatError> {
+async function parseErrorResponse(
+  response: Response,
+): Promise<BackendChatError> {
   let body: FirestoreErrorBody | null = null;
 
   try {
@@ -94,7 +101,9 @@ async function parseErrorResponse(response: Response): Promise<BackendChatError>
   }
 
   const code =
-    typeof body?.error?.status === "string" ? body.error.status : "FIRESTORE_REQUEST_FAILED";
+    typeof body?.error?.status === "string"
+      ? body.error.status
+      : "FIRESTORE_REQUEST_FAILED";
   const message =
     typeof body?.error?.message === "string"
       ? body.error.message
@@ -129,11 +138,14 @@ async function firestoreGetDocument(params: {
   idToken: string;
   path: string;
 }): Promise<FirestoreDocument> {
-  const response = await fetch(`${getFirestoreBaseUrl()}/documents/${params.path}`, {
-    method: "GET",
-    headers: buildAuthHeaders(params.idToken),
-    cache: "no-store",
-  });
+  const response = await fetch(
+    `${getFirestoreBaseUrl()}/documents/${params.path}`,
+    {
+      method: "GET",
+      headers: buildAuthHeaders(params.idToken),
+      cache: "no-store",
+    },
+  );
 
   if (!response.ok) {
     throw await parseErrorResponse(response);
@@ -147,12 +159,15 @@ async function firestoreCreateDocument(params: {
   path: string;
   fields: Record<string, unknown>;
 }): Promise<FirestoreDocument> {
-  const response = await fetch(`${getFirestoreBaseUrl()}/documents/${params.path}`, {
-    method: "POST",
-    headers: buildAuthHeaders(params.idToken),
-    cache: "no-store",
-    body: JSON.stringify({ fields: params.fields }),
-  });
+  const response = await fetch(
+    `${getFirestoreBaseUrl()}/documents/${params.path}`,
+    {
+      method: "POST",
+      headers: buildAuthHeaders(params.idToken),
+      cache: "no-store",
+      body: JSON.stringify({ fields: params.fields }),
+    },
+  );
 
   if (!response.ok) {
     throw await parseErrorResponse(response);
@@ -168,7 +183,9 @@ async function firestorePatchDocument(params: {
   updateMaskFieldPaths: string[];
 }): Promise<FirestoreDocument> {
   const updateMask = params.updateMaskFieldPaths
-    .map((fieldPath) => `updateMask.fieldPaths=${encodeURIComponent(fieldPath)}`)
+    .map(
+      (fieldPath) => `updateMask.fieldPaths=${encodeURIComponent(fieldPath)}`,
+    )
     .join("&");
   const url = `${getFirestoreBaseUrl()}/documents/${params.path}?${updateMask}`;
 
@@ -228,8 +245,7 @@ async function saveMessage(params: {
   const { uid, conversationId, role, text, idToken } = params;
   const now = new Date().toISOString();
 
-  const messagePath =
-    `users/${encodePathSegment(uid)}/conversations/${encodePathSegment(conversationId)}/messages`;
+  const messagePath = `users/${encodePathSegment(uid)}/conversations/${encodePathSegment(conversationId)}/messages`;
 
   const created = await firestoreCreateDocument({
     idToken,
@@ -241,8 +257,7 @@ async function saveMessage(params: {
     },
   });
 
-  const conversationPath =
-    `users/${encodePathSegment(uid)}/conversations/${encodePathSegment(conversationId)}`;
+  const conversationPath = `users/${encodePathSegment(uid)}/conversations/${encodePathSegment(conversationId)}`;
 
   await firestorePatchDocument({
     idToken,
@@ -260,9 +275,22 @@ async function resolveAgentResponseText(params: {
   uid: string;
   conversationId: string;
   message: string;
+  userLocation?: {
+    latitude: number;
+    longitude: number;
+    accuracy?: number;
+  } | null;
+  firebaseIdToken: string;
 }): Promise<string> {
   try {
-    const agentResponse = await requestAgentChatResponse(params);
+    const agentResponse = await requestAgentChatResponse(
+      {
+        conversationId: params.conversationId,
+        message: params.message,
+        userLocation: params.userLocation,
+      },
+      params.firebaseIdToken,
+    );
     return agentResponse.responseMessage.text;
   } catch {
     // Catch ALL errors (network failures, agent errors, etc.)
@@ -274,13 +302,18 @@ async function resolveAgentResponseText(params: {
 export async function processBackendChatRequest(
   request: BackendChatRequest,
   idToken: string,
+  uid: string,
 ): Promise<BackendChatResponse> {
   try {
-    const auth = getBackendAuthContextByUid(request.uid);
+    const auth = getBackendAuthContextByUid(uid);
     const text = request.message.trim();
 
     if (!text) {
-      throw new BackendChatError("message is required.", "INVALID_MESSAGE", 400);
+      throw new BackendChatError(
+        "message is required.",
+        "INVALID_MESSAGE",
+        400,
+      );
     }
 
     const conversationId = await ensureConversation({
@@ -301,6 +334,8 @@ export async function processBackendChatRequest(
       uid: auth.uid,
       conversationId,
       message: text,
+      userLocation: request.userLocation || null,
+      firebaseIdToken: idToken,
     });
 
     const responseMessageId = await saveMessage({

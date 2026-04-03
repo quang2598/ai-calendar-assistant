@@ -10,6 +10,8 @@ import {
 
 export const runtime = "nodejs";
 
+const EXTENSION_CONVERSATION_ID = "extension-conversation";
+
 type UserLocation = {
   latitude?: unknown;
   longitude?: unknown;
@@ -47,22 +49,6 @@ async function parseJsonBody(request: NextRequest): Promise<ChatRequestBody> {
 function parseBody(body: ChatRequestBody) {
   const message = typeof body.message === "string" ? body.message : "";
 
-  let conversationId: string | null;
-  if (
-    body.conversationId === null ||
-    typeof body.conversationId === "undefined"
-  ) {
-    conversationId = null;
-  } else if (typeof body.conversationId === "string") {
-    conversationId = body.conversationId;
-  } else {
-    throw new BackendChatError(
-      "conversationId must be a string or null.",
-      "INVALID_CONVERSATION_ID",
-      400,
-    );
-  }
-
   // Parse userLocation if provided
   let userLocation: {
     latitude: number;
@@ -88,7 +74,6 @@ function parseBody(body: ChatRequestBody) {
   }
 
   return {
-    conversationId,
     message,
     userLocation,
   };
@@ -120,7 +105,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const parsedBody = parseBody(body);
 
     const payload: BackendChatRequest = {
-      conversationId: parsedBody.conversationId,
+      conversationId: EXTENSION_CONVERSATION_ID,
       message: parsedBody.message,
       userLocation: parsedBody.userLocation,
     };
