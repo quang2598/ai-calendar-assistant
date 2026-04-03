@@ -1,6 +1,5 @@
 import type { ChatMessageRole } from "@/src/types/chat";
 import {
-  AgentChatServiceError,
   requestAgentChatResponse,
 } from "@/src/services/chat/agentChatService";
 
