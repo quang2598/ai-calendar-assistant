@@ -1,6 +1,5 @@
 import type { ChatMessageRole } from "@/src/types/chat";
 import {
-  AgentChatServiceError,
   requestAgentChatResponse,
 } from "@/src/services/chat/agentChatService";
 
@@ -357,4 +356,75 @@ export async function processBackendChatRequest(
   } catch (error) {
     throw normalizeServiceError(error);
   }
+}
+
+export async function processBackendChatStreamRequest(
+  request: BackendChatRequest,
+  idToken: string,
+  uid: string,
+): Promise<{ stream: ReadableStream; conversationId: string }> {
+  const auth = getBackendAuthContextByUid(uid);
+  const text = request.message.trim();
+
+  if (!text) {
+    throw new BackendChatError(
+      "message is required.",
+      "INVALID_MESSAGE",
+      400,
+    );
+  }
+
+  const conversationId = await ensureConversation({
+    uid: auth.uid,
+    conversationId: request.conversationId,
+    idToken,
+  });
+
+  await saveMessage({
+    uid: auth.uid,
+    conversationId,
+    role: "user",
+    text,
+    idToken,
+  });
+
+  // Option A: Call the regular (non-streaming) agent endpoint,
+  // then stream the full response to the client via SSE.
+  const responseText = await resolveAgentResponseText({
+    uid: auth.uid,
+    conversationId,
+    message: text,
+    userLocation: request.userLocation || null,
+    firebaseIdToken: idToken,
+  });
+
+  const messageId = await saveMessage({
+    uid: auth.uid,
+    conversationId,
+    role: "system",
+    text: responseText,
+    idToken,
+  });
+
+  const encoder = new TextEncoder();
+
+  const stream = new ReadableStream({
+    start(controller) {
+      // Send the full response as a single text chunk
+      controller.enqueue(
+        encoder.encode(`data: ${JSON.stringify({ text: responseText })}\n\n`),
+      );
+
+      // Send done event with metadata
+      controller.enqueue(
+        encoder.encode(
+          `data: ${JSON.stringify({ done: true, conversationId, messageId })}\n\n`,
+        ),
+      );
+
+      controller.close();
+    },
+  });
+
+  return { stream, conversationId };
 }

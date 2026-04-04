@@ -1,3 +1,5 @@
+import { useEffect, useRef } from "react";
+
 import type {
   AsyncStatus,
   ConversationMessage,
@@ -29,6 +31,8 @@ type ChatPanelProps = {
   micFrequencies?: number[];
   isSpeaking?: boolean;
   onStopSpeaking?: () => void;
+  getVisibleText?: (messageId: string, fullText: string) => string;
+  isRevealingMessage?: (messageId: string) => boolean;
 };
 
 export default function ChatPanel({
@@ -50,9 +54,20 @@ export default function ChatPanel({
   micFrequencies,
   isSpeaking,
   onStopSpeaking,
+  getVisibleText,
+  isRevealingMessage,
 }: ChatPanelProps) {
   const dispatch = useAppDispatch();
   const isCalendarOpen = useAppSelector(selectIsCalendarOpen);
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Auto-scroll to bottom when messages change, typing indicator, or text reveal updates
+  useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  });
+
 
   const showMessageList =
     !activeMessagesError &&
@@ -109,7 +124,7 @@ export default function ChatPanel({
         </div>
       </header>
 
-      <div className="flex-1 overflow-y-auto px-4 py-6 sm:px-6">
+      <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-6 pb-4 sm:px-6">
         {!activeConversation && activeMessages.length === 0 ? (
           <section className="mx-auto mt-10 max-w-4xl rounded-2xl border border-slate-800 bg-slate-900/60 p-6 text-center">
             <h2 className="text-2xl font-semibold tracking-tight text-slate-100">VietCalenAI</h2>
@@ -182,7 +197,7 @@ export default function ChatPanel({
                   className={`flex ${isUser ? "justify-end" : "justify-start"}`}
                 >
                   <div
-                    className={`max-w-[85%] rounded-2xl border px-4 py-3 text-sm leading-relaxed sm:max-w-2xl ${
+                    className={`max-w-[85%] rounded-2xl border px-4 py-3 text-base leading-relaxed sm:max-w-2xl ${
                       isUser
                         ? "border-cyan-400/30 bg-cyan-400/10 text-cyan-100"
                         : "border-slate-800 bg-slate-900 text-slate-200"
@@ -191,7 +206,19 @@ export default function ChatPanel({
                     <p className="mb-1 text-[11px] uppercase tracking-wide opacity-70">
                       {message.role}
                     </p>
-                    <p>{message.text}</p>
+                    <p>
+                      {!isUser && getVisibleText
+                        ? getVisibleText(message.id, message.text)
+                        : message.text}
+                      {!isUser && isRevealingMessage?.(message.id) && (
+                        <span
+                          className="ml-px text-cyan-400"
+                          style={{ animation: "blink-cursor 0.7s infinite" }}
+                        >
+                          ▊
+                        </span>
+                      )}
+                    </p>
                   </div>
                 </div>
               );
@@ -199,8 +226,7 @@ export default function ChatPanel({
 
             {isAssistantTyping ? (
               <div className="flex justify-start">
-                <div className="rounded-2xl border border-slate-800 bg-slate-900 px-4 py-3 text-sm text-slate-300">
-                  <p className="mb-1 text-[11px] uppercase tracking-wide opacity-70">system</p>
+                <div className="rounded-2xl border border-slate-800 bg-slate-900 px-4 py-3 text-base text-slate-300">
                   <div className="inline-flex items-center gap-1">
                     <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-slate-400" />
                     <span
@@ -215,6 +241,9 @@ export default function ChatPanel({
                 </div>
               </div>
             ) : null}
+
+            {/* Spacer so last message isn't hidden behind composer */}
+            <div className="h-4" />
           </section>
         ) : null}
       </div>

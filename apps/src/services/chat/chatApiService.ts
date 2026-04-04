@@ -158,3 +158,102 @@ export async function sendMessageToServer(
 
   return parseSuccessData(body.data);
 }
+
+export type StreamChunk =
+  | { type: "text"; text: string }
+  | { type: "done"; conversationId: string; messageId: string };
+
+export async function sendMessageToServerStream(
+  payload: SendChatApiRequest,
+  onChunk: (chunk: StreamChunk) => void,
+): Promise<void> {
+  const user = auth.currentUser;
+  if (!user) {
+    throw new ChatApiServiceError(
+      "User is not authenticated.",
+      "UNAUTHORIZED",
+      401,
+    );
+  }
+
+  const idToken = await user.getIdToken();
+
+  const response = await fetch("/api/backend/chat", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${idToken}`,
+      "X-Stream": "true",
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    let body: ApiErrorBody | null = null;
+    try {
+      body = (await response.json()) as ApiErrorBody;
+    } catch {
+      body = null;
+    }
+
+    const code =
+      typeof body?.error?.code === "string"
+        ? body.error.code
+        : "CHAT_API_ERROR";
+    const message =
+      typeof body?.error?.message === "string"
+        ? body.error.message
+        : `Chat API stream failed with status ${response.status}.`;
+
+    throw new ChatApiServiceError(message, code, response.status);
+  }
+
+  const reader = response.body?.getReader();
+  if (!reader) {
+    throw new ChatApiServiceError(
+      "Stream response has no body.",
+      "INVALID_RESPONSE",
+      502,
+    );
+  }
+
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? "";
+
+    for (const line of lines) {
+      if (!line.startsWith("data: ")) continue;
+      const data = line.slice(6).trim();
+      if (data === "[DONE]" || !data) continue;
+
+      try {
+        const parsed = JSON.parse(data) as {
+          text?: string;
+          done?: boolean;
+          conversationId?: string;
+          messageId?: string;
+        };
+
+        if (parsed.done && parsed.conversationId) {
+          onChunk({
+            type: "done",
+            conversationId: parsed.conversationId,
+            messageId: parsed.messageId ?? "",
+          });
+        } else if (parsed.text) {
+          onChunk({ type: "text", text: parsed.text });
+        }
+      } catch {
+        // Skip malformed SSE events
+      }
+    }
+  }
+}
