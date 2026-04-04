@@ -269,6 +269,33 @@ SERVICE_TYPE_MAPPING = {
 }
 
 
+# Mapping of cuisine types to search keywords for better filtering
+# When a cuisine is specified, Google Places API will search using these keywords
+CUISINE_KEYWORDS = {
+    "chinese": "chinese restaurant",
+    "japanese": "japanese restaurant",
+    "mexican": "mexican restaurant",
+    "thai": "thai restaurant",
+    "italian": "italian restaurant",
+    "indian": "indian restaurant",
+    "sushi": "sushi",
+    "ramen": "ramen",
+    "korean": "korean restaurant",
+    "vietnamese": "vietnamese restaurant",
+    "mediterranean": "mediterranean restaurant",
+    "seafood": "seafood restaurant",
+    "steakhouse": "steakhouse",
+    "vegetarian": "vegetarian restaurant",
+    "vegan": "vegan restaurant",
+    "organic": "organic restaurant",
+    "pizza": "pizza",
+    "pizza shop": "pizza",
+    "burger": "burger restaurant",
+    "chicken": "chicken restaurant",
+    "fast food": "fast food",
+}
+
+
 class ConfirmUserLocationInput(BaseModel):
     """Input model for confirming/getting user location."""
     address: Optional[str] = Field(
@@ -315,7 +342,9 @@ class GetServiceRecommendationInput(BaseModel):
         description=(
             "Type of service to search for. Comprehensive support for all service types including: "
             "Accommodation (hotel, motel, hostel, inn, resort), "
-            "Food & Beverage (restaurant, cafe, bakery, bar, nightclub), "
+            "Food & Beverage with full cuisine support (restaurant, cafe, bakery, bar, nightclub, "
+            "chinese, japanese, mexican, thai, italian, indian, sushi, ramen, korean, vietnamese, "
+            "mediterranean, seafood, steakhouse, vegetarian, vegan, organic, pizza, burger, chicken, fast food), "
             "Beauty & Personal Care (barbershop, hair salon, beauty salon, spa, nail salon), "
             "Health & Medical (hospital, dentist, doctor, clinic, veterinary, pharmacy), "
             "Fitness & Recreation (gym, yoga, swimming pool, bowling, amusement park, stadium), "
@@ -326,7 +355,8 @@ class GetServiceRecommendationInput(BaseModel):
             "Services (post office, laundry, parking, plumber, electrician, locksmith, painter, carpenter, landscaper, florist), "
             "Education (school, university, college), "
             "Transportation (taxi, bus station, train station, airport), "
-            "and Government services. The system will automatically map user-friendly names to Google Places API types."
+            "and Government services. For cuisine types, the system automatically filters to show only that cuisine type, "
+            "avoiding unrelated results like hotels or stores."
         ),
     )
     location: Optional[str] = Field(
@@ -360,10 +390,10 @@ class GetServiceRecommendationInput(BaseModel):
         description="Optional longitude coordinate for the search location.",
     )
     radius_meters: int = Field(
-        default=5000,
+        default=8000,
         ge=100,
         le=50000,
-        description="Search radius in meters. Default is 5000 (5km).",
+        description="Search radius in meters. Default is 8km (~5 miles).",
     )
     max_results: int = Field(
         default=5,
@@ -550,6 +580,19 @@ def _format_place_result(place_data: dict) -> dict:
     }
 
 
+def _get_cuisine_keyword(service_type: str) -> Optional[str]:
+    """Get cuisine keyword for search filtering.
+    
+    Args:
+        service_type: The requested service type
+        
+    Returns:
+        Cuisine keyword for filtering, or None if not a cuisine type
+    """
+    service_lower = service_type.lower().strip()
+    return CUISINE_KEYWORDS.get(service_lower)
+
+
 @trace_span("tool_confirm_user_location")
 def _confirm_user_location_impl(
     gmaps_client: googlemaps.Client,
@@ -659,10 +702,14 @@ def _get_service_recommendations_impl(
 ) -> str:
     """Get service recommendations based on location and service type."""
     # Map user-friendly service type to Google Places API type
-    api_service_type = SERVICE_TYPE_MAPPING.get(service_type.lower().strip())
+    service_lower = service_type.lower().strip()
+    api_service_type = SERVICE_TYPE_MAPPING.get(service_lower)
     if not api_service_type:
         # Try direct match if mapping not found
-        api_service_type = service_type.lower().strip()
+        api_service_type = service_lower
+    
+    # Check if this is a cuisine-specific search
+    cuisine_keyword = _get_cuisine_keyword(service_type)
     
     # Determine search location
     search_lat, search_lng = None, None
@@ -711,12 +758,22 @@ def _get_service_recommendations_impl(
 
     try:
         # Search for nearby places
-        places_result = gmaps_client.places_nearby(
-            location=(search_lat, search_lng),
-            radius=radius_meters,
-            type=api_service_type,
-            rank_by=None,  # Use radius ranking
-        )
+        # For cuisine-specific searches, use keyword to filter results better
+        if cuisine_keyword:
+            places_result = gmaps_client.places_nearby(
+                location=(search_lat, search_lng),
+                radius=radius_meters,
+                keyword=cuisine_keyword,
+                type="restaurant",
+                rank_by=None,  # Use radius ranking
+            )
+        else:
+            places_result = gmaps_client.places_nearby(
+                location=(search_lat, search_lng),
+                radius=radius_meters,
+                type=api_service_type,
+                rank_by=None,  # Use radius ranking
+            )
 
         if places_result["status"] != "OK":
             message = places_result.get("error_message", "No results found.")
@@ -927,15 +984,19 @@ def build_location_tools(
     ) -> str:
         """Find nearby services and businesses based on type and location.
         
-        Searches for nearby services and automatically maps user-friendly names to
-        Google Places API types. Returns results with ratings and basic information.
+        Searches for nearby services with smart filtering. For cuisine-specific searches
+        (e.g., 'vietnamese restaurant', 'thai food'), the system uses keyword filtering to
+        return only that cuisine type, avoiding unrelated results like hotels or other stores.
         
         Supported service types: barbershop, hair salon, beauty salon, restaurant,
         mechanic, car repair, grocery store, gas station, pharmacy, coffee shop, cafe,
-        hotel, hospital, dentist, gym, doctor, and more.
+        hotel, hospital, dentist, gym, doctor, and more. Full cuisine support includes:
+        chinese, japanese, mexican, thai, italian, indian, sushi, ramen, korean, vietnamese,
+        mediterranean, seafood, steakhouse, vegetarian, vegan, organic, pizza, burger, and more.
         
         Args:
-            service_type: Type of service to search for (required)
+            service_type: Type of service to search for (required). For cuisine types,
+                         specify exactly the cuisine name (e.g., 'vietnamese', 'thai')
             location: Location address or name to search from
             zip_code: ZIP/postal code to search around (can be combined with city/state)
             city: City name to improve zip code search accuracy

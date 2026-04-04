@@ -9,7 +9,9 @@ import {
 import {
   ChatApiServiceError,
   sendMessageToServer,
+  sendMessageToServerStream,
   UserLocation,
+  type StreamChunk,
 } from "@/src/services/chat/chatApiService";
 import type { RootState } from "@/src/store";
 
@@ -24,6 +26,7 @@ import {
   sendingStarted,
   sendingSucceeded,
   setActiveConversation,
+  streamingChunkReceived,
 } from "./chatSlice";
 
 type SendComposerMessagePayload = {
@@ -265,6 +268,98 @@ export const sendComposerMessage = createAsyncThunk<
           conversationId: data.conversationId,
         }),
       );
+
+      dispatch(sendingSucceeded());
+    } catch (error) {
+      const errorMessage = normalizeChatApiError(error);
+      dispatch(sendingFailed(errorMessage));
+      return rejectWithValue(errorMessage);
+    }
+  },
+);
+
+type SendComposerMessageStreamingPayload = {
+  userLocation?: UserLocation | null;
+  onStreamChunk?: (chunk: StreamChunk) => void;
+  /** When true, don't create optimistic streaming messages in Redux (voice mode) */
+  suppressStreamingUI?: boolean;
+};
+
+export const sendComposerMessageStreaming = createAsyncThunk<
+  void,
+  SendComposerMessageStreamingPayload,
+  { state: RootState; rejectValue: string }
+>(
+  "chat/sendComposerMessageStreaming",
+  async (
+    { userLocation, onStreamChunk, suppressStreamingUI },
+    { dispatch, getState, rejectWithValue },
+  ) => {
+    const state = getState();
+    if (state.chat.sendingStatus === "loading") {
+      return;
+    }
+
+    const message = state.chat.composerText.trim();
+    const conversationId = state.chat.activeConversationId;
+    const uid = getCurrentAuthUid();
+
+    if (!message) {
+      const error = "Message cannot be empty.";
+      dispatch(sendingFailed(error));
+      return rejectWithValue(error);
+    }
+
+    if (!uid) {
+      const error = "User is not authenticated.";
+      dispatch(sendingFailed(error));
+      return rejectWithValue(error);
+    }
+
+    dispatch(sendingStarted({ conversationId, messageText: message }));
+
+    try {
+      let resolvedConversationId = conversationId ?? "";
+
+      await sendMessageToServerStream(
+        {
+          conversationId,
+          message,
+          userLocation: userLocation || null,
+        },
+        (chunk) => {
+          if (chunk.type === "text" && !suppressStreamingUI) {
+            const convId = resolvedConversationId || "__pending__";
+            dispatch(
+              streamingChunkReceived({
+                conversationId: convId,
+                text: chunk.text,
+              }),
+            );
+          }
+
+          if (chunk.type === "done") {
+            resolvedConversationId = chunk.conversationId;
+          }
+
+          // Forward chunk to caller for TTS
+          onStreamChunk?.(chunk);
+        },
+      );
+
+      if (resolvedConversationId) {
+        const currentActiveConversationId =
+          getState().chat.activeConversationId;
+        if (currentActiveConversationId !== resolvedConversationId) {
+          dispatch(setActiveConversation(resolvedConversationId));
+        }
+
+        await dispatch(
+          startMessagesListener({
+            conversationId: resolvedConversationId,
+          }),
+        );
+      }
 
       dispatch(sendingSucceeded());
     } catch (error) {
