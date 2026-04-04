@@ -42,6 +42,8 @@ type ChatShellProps = {
   micFrequencies?: number[];
   isSpeaking?: boolean;
   onStopSpeaking?: () => void;
+  getVisibleText?: (messageId: string, fullText: string) => string;
+  isRevealingMessage?: (messageId: string) => boolean;
 };
 
 export default function ChatShell({
@@ -78,6 +80,8 @@ export default function ChatShell({
   micFrequencies,
   isSpeaking,
   onStopSpeaking,
+  getVisibleText,
+  isRevealingMessage,
 }: ChatShellProps) {
   return (
     <main className="h-screen bg-slate-950 text-slate-100">
@@ -118,6 +122,8 @@ export default function ChatShell({
           micFrequencies={micFrequencies}
           isSpeaking={isSpeaking}
           onStopSpeaking={onStopSpeaking}
+          getVisibleText={getVisibleText}
+          isRevealingMessage={isRevealingMessage}
         />
         <CalendarPanel />
       </div>

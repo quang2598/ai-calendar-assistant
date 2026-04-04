@@ -35,7 +35,7 @@ import {
   startNewConversationDraft,
 } from "@/src/features/chat/chatSlice";
 import {
-  sendComposerMessage,
+  sendComposerMessageStreaming,
   startConversationsListener,
   startMessagesListener,
   stopMessagesListener,
@@ -46,6 +46,7 @@ import { useGeolocation } from "@/src/hooks/useGeolocation";
 import { useSpeechRecognition } from "@/src/hooks/useSpeechRecognition";
 import { useSpeechSynthesis } from "@/src/hooks/useSpeechSynthesis";
 import { useAudioVisualizer } from "@/src/hooks/useAudioVisualizer";
+import { useTextReveal } from "@/src/hooks/useTextReveal";
 
 function FullScreenSpinner() {
   return (
@@ -66,6 +67,9 @@ function HomePageContent() {
 
   // Request user's geolocation for location-based service lookups
   const { coordinates: userLocation } = useGeolocation(true, false);
+
+  // Track whether current interaction is voice or text for TTS gating
+  const inputModeRef = useRef<"text" | "voice">("text");
 
   const initialized = useAppSelector(selectAuthInitialized);
   const isAuthenticated = useAppSelector(selectIsAuthenticated);
@@ -95,13 +99,32 @@ function HomePageContent() {
     [dispatch],
   );
 
+  // Keep refs in sync for the silence timeout callback
+  const composerTextRef = useRef(composerText);
+  useEffect(() => {
+    composerTextRef.current = composerText;
+  }, [composerText]);
+
+  const sendingRef = useRef(isSendingMessage);
+  useEffect(() => {
+    sendingRef.current = isSendingMessage;
+  }, [isSendingMessage]);
+
+  // Ref for the silence timeout handler — populated after dependencies are defined
+  const handleSilenceTimeoutRef = useRef<() => void>(() => {});
+
   const {
     isListening,
     isSupported: isVoiceSupported,
     startListening,
     stopListening,
     error: voiceError,
-  } = useSpeechRecognition(handleVoiceTranscript);
+  } = useSpeechRecognition(handleVoiceTranscript, {
+    onSilenceTimeout: useCallback(() => {
+      handleSilenceTimeoutRef.current();
+    }, []),
+    silenceTimeoutMs: 700,
+  });
 
   const {
     volume: micVolume,
@@ -112,46 +135,36 @@ function HomePageContent() {
 
   function handleMicToggle() {
     if (isListening) {
+      inputModeRef.current = "text";
       stopListening();
       stopVisualizer();
     } else {
-      // Start speech recognition first — once mic is granted,
-      // start the visualizer reusing the same mic permission (1 prompt only).
       startListening(() => {
         void startVisualizer();
       });
     }
   }
 
-  const { isSpeaking, speak, stop: stopSpeaking } = useSpeechSynthesis();
+  const {
+    isSpeaking,
+    speak,
+    stop: stopSpeaking,
+  } = useSpeechSynthesis();
 
-  // Only speak responses that arrive AFTER the user sent a message.
-  // When clicking a conversation, isSendingMessage is false → no auto-play.
-  const shouldSpeakNextRef = useRef(false);
-  const lastSpokenMessageIdRef = useRef<string | null>(null);
+  const { getVisibleText, isRevealing, setWaitingForReveal, startReveal, startRevealSynced, stopReveal } =
+    useTextReveal();
 
-  // Set flag when user sends a message
+  // Keep refs for TTS and reveal callbacks
+  const speakRef = useRef(speak);
+  const setWaitingRef = useRef(setWaitingForReveal);
+  const startRevealRef = useRef(startReveal);
+  const startRevealSyncedRef = useRef(startRevealSynced);
   useEffect(() => {
-    if (isSendingMessage) {
-      shouldSpeakNextRef.current = true;
-    }
-  }, [isSendingMessage]);
-
-  useEffect(() => {
-    if (!shouldSpeakNextRef.current) return;
-    if (activeMessages.length === 0) return;
-
-    const lastMessage = activeMessages[activeMessages.length - 1];
-    if (
-      lastMessage.role === "system" &&
-      lastMessage.text &&
-      lastMessage.id !== lastSpokenMessageIdRef.current
-    ) {
-      lastSpokenMessageIdRef.current = lastMessage.id;
-      shouldSpeakNextRef.current = false;
-      speak(lastMessage.text);
-    }
-  }, [activeMessages, speak]);
+    speakRef.current = speak;
+    setWaitingRef.current = setWaitingForReveal;
+    startRevealRef.current = startReveal;
+    startRevealSyncedRef.current = startRevealSynced;
+  }, [speak, setWaitingForReveal, startReveal, startRevealSynced]);
 
   useEffect(() => {
     if (initialized && !isAuthenticated) {
@@ -196,28 +209,85 @@ function HomePageContent() {
   }
 
   function handleSendMessage() {
-    console.log(
-      "%c[DEBUG] handleSendMessage - userLocation status:",
-      "color: blue; font-weight: bold;",
-      {
-        hasLocation: !!userLocation,
-        coordinates: userLocation
-          ? { lat: userLocation.latitude, lng: userLocation.longitude }
-          : null,
-      },
-    );
-    void dispatch(
-      sendComposerMessage({
-        userLocation: userLocation
-          ? {
-              latitude: userLocation.latitude,
-              longitude: userLocation.longitude,
-              accuracy: userLocation.accuracy,
+    const locationPayload = userLocation
+      ? {
+          latitude: userLocation.latitude,
+          longitude: userLocation.longitude,
+          accuracy: userLocation.accuracy,
+        }
+      : null;
+
+    if (inputModeRef.current === "voice") {
+      // Hide the next system message before it arrives (prevents flash)
+      // Pass current message IDs so only NEW messages get hidden
+      const currentIds = activeMessages.map((m) => m.id);
+      setWaitingRef.current(true, undefined, currentIds);
+      let fullText = "";
+      void dispatch(
+        sendComposerMessageStreaming({
+          userLocation: locationPayload,
+          suppressStreamingUI: true,
+          onStreamChunk: (chunk) => {
+            if (chunk.type === "text") {
+              fullText += chunk.text;
+            } else if (chunk.type === "done") {
+              const messageId = chunk.messageId;
+              if (messageId) {
+                setWaitingRef.current(true, messageId);
+              }
+              if (fullText.trim()) {
+                speakRef.current(fullText, {
+                  onPlaybackStart: (durationMs) => {
+                    if (messageId) {
+                      startRevealSyncedRef.current(
+                        messageId,
+                        fullText,
+                        durationMs,
+                      );
+                    }
+                  },
+                });
+              }
+              inputModeRef.current = "text";
             }
-          : null,
-      }),
-    );
+          },
+        }),
+      );
+    } else {
+      // Hide the next system message before it arrives (prevents flash)
+      const currentIds = activeMessages.map((m) => m.id);
+      setWaitingRef.current(true, undefined, currentIds);
+      let fullText = "";
+      void dispatch(
+        sendComposerMessageStreaming({
+          userLocation: locationPayload,
+          suppressStreamingUI: true,
+          onStreamChunk: (chunk) => {
+            if (chunk.type === "text") {
+              fullText += chunk.text;
+            } else if (chunk.type === "done") {
+              const messageId = chunk.messageId;
+              if (messageId) {
+                setWaitingRef.current(true, messageId);
+              }
+              if (messageId && fullText.trim()) {
+                startRevealRef.current(messageId, fullText);
+              }
+            }
+          },
+        }),
+      );
+    }
   }
+
+  // Wire up the silence timeout handler now that all dependencies are available
+  handleSilenceTimeoutRef.current = () => {
+    if (!composerTextRef.current.trim() || sendingRef.current) return;
+    inputModeRef.current = "voice";
+    stopListening();
+    stopVisualizer();
+    handleSendMessage();
+  };
 
   async function handleConnectGoogleCalendar() {
     const currentUser = auth.currentUser;
@@ -335,7 +405,12 @@ function HomePageContent() {
       micVolume={micVolume}
       micFrequencies={micFrequencies}
       isSpeaking={isSpeaking}
-      onStopSpeaking={stopSpeaking}
+      onStopSpeaking={() => {
+        stopSpeaking();
+        stopReveal();
+      }}
+      getVisibleText={getVisibleText}
+      isRevealingMessage={isRevealing}
     />
   );
 }

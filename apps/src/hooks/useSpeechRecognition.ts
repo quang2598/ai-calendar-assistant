@@ -62,18 +62,32 @@ function getSpeechRecognitionConstructor(): (new () => SpeechRecognitionInstance
     | null;
 }
 
+type SpeechRecognitionOptions = {
+  onSilenceTimeout?: () => void;
+  silenceTimeoutMs?: number;
+};
+
 export function useSpeechRecognition(
   onTranscript: (text: string) => void,
+  options?: SpeechRecognitionOptions,
 ): UseSpeechRecognitionReturn {
   const [status, setStatus] = useState<SpeechStatus>("idle");
   const [error, setError] = useState<string | null>(null);
   const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
   const onTranscriptRef = useRef(onTranscript);
   const wantListeningRef = useRef(false);
+  const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const onSilenceTimeoutRef = useRef(options?.onSilenceTimeout);
+  const silenceTimeoutMsRef = useRef(options?.silenceTimeoutMs ?? 1200);
 
   useEffect(() => {
     onTranscriptRef.current = onTranscript;
   }, [onTranscript]);
+
+  useEffect(() => {
+    onSilenceTimeoutRef.current = options?.onSilenceTimeout;
+    silenceTimeoutMsRef.current = options?.silenceTimeoutMs ?? 1200;
+  }, [options?.onSilenceTimeout, options?.silenceTimeoutMs]);
 
   const isSupported = typeof window !== "undefined" && getSpeechRecognitionConstructor() !== null;
 
@@ -110,6 +124,16 @@ export function useSpeechRecognition(
 
       if (finalTranscript) {
         onTranscriptRef.current(finalTranscript);
+
+        // Reset silence timer — auto-send after silence
+        if (silenceTimerRef.current) {
+          clearTimeout(silenceTimerRef.current);
+        }
+        if (onSilenceTimeoutRef.current) {
+          silenceTimerRef.current = setTimeout(() => {
+            onSilenceTimeoutRef.current?.();
+          }, silenceTimeoutMsRef.current);
+        }
       }
     };
 
@@ -183,6 +207,10 @@ export function useSpeechRecognition(
 
   const stopListening = useCallback(() => {
     wantListeningRef.current = false;
+    if (silenceTimerRef.current) {
+      clearTimeout(silenceTimerRef.current);
+      silenceTimerRef.current = null;
+    }
     if (recognitionRef.current) {
       recognitionRef.current.stop();
       recognitionRef.current = null;
@@ -193,6 +221,10 @@ export function useSpeechRecognition(
   useEffect(() => {
     return () => {
       wantListeningRef.current = false;
+      if (silenceTimerRef.current) {
+        clearTimeout(silenceTimerRef.current);
+        silenceTimerRef.current = null;
+      }
       if (recognitionRef.current) {
         recognitionRef.current.abort();
         recognitionRef.current = null;
