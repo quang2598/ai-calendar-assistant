@@ -61,7 +61,7 @@ def _to_conversation_message(document: DocumentSnapshot) -> Optional[Conversatio
 @trace_span("fetch_conversation_messages")
 def fetch_conversation_messages(uid: str, conversation_id: str, limit: int = 10) -> List[ConversationMessage]:
     """
-    Fetch conversation messages ordered by createdAt ascending.
+    Fetch conversation messages ordered by createdAt descending (latest first).
     
     Args:
         uid: User ID
@@ -78,7 +78,7 @@ def fetch_conversation_messages(uid: str, conversation_id: str, limit: int = 10)
         .collection("conversations")
         .document(cleaned_conversation_id)
         .collection("messages")
-        .order_by("createdAt")
+        .order_by("createdAt", direction="DESCENDING")
         .limit(limit)
     )
 

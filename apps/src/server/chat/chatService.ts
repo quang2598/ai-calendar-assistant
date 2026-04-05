@@ -1,7 +1,5 @@
 import type { ChatMessageRole } from "@/src/types/chat";
-import {
-  requestAgentChatResponse,
-} from "@/src/services/chat/agentChatService";
+import { requestAgentChatResponse } from "@/src/services/chat/agentChatService";
 
 import { getBackendAuthContextByUid } from "./chatAuth";
 import { BackendChatError, toBackendChatError } from "./chatErrors";
@@ -280,7 +278,7 @@ async function resolveAgentResponseText(params: {
     accuracy?: number;
   } | null;
   firebaseIdToken: string;
-}): Promise<string> {
+}): Promise<{ responseText: string; correctedUserMessage?: string | null }> {
   try {
     const agentResponse = await requestAgentChatResponse(
       {
@@ -290,12 +288,76 @@ async function resolveAgentResponseText(params: {
       },
       params.firebaseIdToken,
     );
-    return agentResponse.responseMessage.text;
+    return {
+      responseText: agentResponse.responseMessage.text,
+      correctedUserMessage: agentResponse.correctedUserMessage,
+    };
   } catch {
     // Catch ALL errors (network failures, agent errors, etc.)
     // so the user message is still saved and a response is returned.
-    return FALLBACK_AGENT_RESPONSE_TEXT;
+    return {
+      responseText: FALLBACK_AGENT_RESPONSE_TEXT,
+      correctedUserMessage: undefined,
+    };
   }
+}
+
+async function applyCorrectedUserMessageIfNeeded(params: {
+  idToken: string;
+  uid: string;
+  conversationId: string;
+  userMessageId: string;
+  originalText: string;
+  correctedUserMessage?: string | null;
+}): Promise<void> {
+  const {
+    idToken,
+    uid,
+    conversationId,
+    userMessageId,
+    originalText,
+    correctedUserMessage,
+  } = params;
+
+  const normalizedOriginal = originalText.trim();
+  const normalizedCorrected = (correctedUserMessage ?? "").trim();
+
+  if (!normalizedCorrected) {
+    console.log("[CORRECTED_MESSAGE] No corrected message from agent");
+    return;
+  }
+
+  if (normalizedCorrected === normalizedOriginal) {
+    console.log(
+      "[CORRECTED_MESSAGE] Message not updated (no change detected):",
+      {
+        originalText: normalizedOriginal,
+        correctedText: normalizedCorrected,
+      },
+    );
+    return;
+  }
+
+  console.log("[CORRECTED_MESSAGE] Updating message in Firestore:", {
+    userMessageId,
+    originalText: normalizedOriginal,
+    correctedText: normalizedCorrected,
+    isDifferent: normalizedCorrected !== normalizedOriginal,
+  });
+
+  await firestorePatchDocument({
+    idToken,
+    path: `users/${encodePathSegment(uid)}/conversations/${encodePathSegment(conversationId)}/messages/${encodePathSegment(userMessageId)}`,
+    fields: {
+      text: toFirestoreStringValue(normalizedCorrected),
+    },
+    updateMaskFieldPaths: ["text"],
+  });
+
+  console.log(
+    "[CORRECTED_MESSAGE] Firestore update completed for message:",
+    userMessageId,
+  );
 }
 
 export async function processBackendChatRequest(
@@ -321,7 +383,7 @@ export async function processBackendChatRequest(
       idToken,
     });
 
-    await saveMessage({
+    const userMessageId = await saveMessage({
       uid: auth.uid,
       conversationId,
       role: "user",
@@ -329,12 +391,23 @@ export async function processBackendChatRequest(
       idToken,
     });
 
-    const responseText = await resolveAgentResponseText({
+    const agentResult = await resolveAgentResponseText({
       uid: auth.uid,
       conversationId,
       message: text,
       userLocation: request.userLocation || null,
       firebaseIdToken: idToken,
+    });
+
+    const responseText = agentResult.responseText;
+
+    await applyCorrectedUserMessageIfNeeded({
+      idToken,
+      uid: auth.uid,
+      conversationId,
+      userMessageId,
+      originalText: text,
+      correctedUserMessage: agentResult.correctedUserMessage,
     });
 
     const responseMessageId = await saveMessage({
@@ -367,11 +440,7 @@ export async function processBackendChatStreamRequest(
   const text = request.message.trim();
 
   if (!text) {
-    throw new BackendChatError(
-      "message is required.",
-      "INVALID_MESSAGE",
-      400,
-    );
+    throw new BackendChatError("message is required.", "INVALID_MESSAGE", 400);
   }
 
   const conversationId = await ensureConversation({
@@ -380,7 +449,7 @@ export async function processBackendChatStreamRequest(
     idToken,
   });
 
-  await saveMessage({
+  const userMessageId = await saveMessage({
     uid: auth.uid,
     conversationId,
     role: "user",
@@ -390,12 +459,23 @@ export async function processBackendChatStreamRequest(
 
   // Option A: Call the regular (non-streaming) agent endpoint,
   // then stream the full response to the client via SSE.
-  const responseText = await resolveAgentResponseText({
+  const agentResult = await resolveAgentResponseText({
     uid: auth.uid,
     conversationId,
     message: text,
     userLocation: request.userLocation || null,
     firebaseIdToken: idToken,
+  });
+
+  const responseText = agentResult.responseText;
+
+  await applyCorrectedUserMessageIfNeeded({
+    idToken,
+    uid: auth.uid,
+    conversationId,
+    userMessageId,
+    originalText: text,
+    correctedUserMessage: agentResult.correctedUserMessage,
   });
 
   const messageId = await saveMessage({

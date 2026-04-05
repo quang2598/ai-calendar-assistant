@@ -12,6 +12,7 @@ export type AgentChatResponse = {
   responseMessage: {
     text: string;
   };
+  correctedUserMessage?: string | null;
 };
 
 type AgentChatErrorBody = {
@@ -73,10 +74,17 @@ function parseAgentChatResponse(data: unknown): AgentChatResponse {
     );
   }
 
+  // Extract correctedUserMessage if provided
+  const correctedUserMessage = payload.correctedUserMessage;
+  const parsedCorrectedMessage = isNonEmptyString(correctedUserMessage)
+    ? correctedUserMessage
+    : undefined;
+
   return {
     responseMessage: {
       text,
     },
+    correctedUserMessage: parsedCorrectedMessage,
   };
 }
 
