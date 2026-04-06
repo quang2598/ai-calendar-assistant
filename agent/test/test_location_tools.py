@@ -118,14 +118,14 @@ class TestGetServiceRecommendationInput:
 class TestGetPlaceDetailsInput:
     """Test place details input validation."""
 
-    def test_with_place_id(self):
-        input_data = GetPlaceDetailsInput(place_id="ChIJIQBpAG2dQIcRfZd1H5HTQJE")
-        assert input_data.place_id == "ChIJIQBpAG2dQIcRfZd1H5HTQJE"
+    def test_with_place_name(self):
+        input_data = GetPlaceDetailsInput(place_name="Pho The Good Times Asian Bistro")
+        assert input_data.place_name == "Pho The Good Times Asian Bistro"
         assert input_data.include_reviews is True
 
     def test_without_reviews(self):
         input_data = GetPlaceDetailsInput(
-            place_id="ChIJIQBpAG2dQIcRfZd1H5HTQJE",
+            place_name="Pho The Good Times Asian Bistro",
             include_reviews=False,
         )
         assert input_data.include_reviews is False

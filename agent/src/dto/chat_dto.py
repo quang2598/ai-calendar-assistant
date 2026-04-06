@@ -82,9 +82,17 @@ class ResponseMessage(BaseModel):
 
 class SendChatResponse(BaseModel):
     responseMessage: ResponseMessage
+    correctedUserMessage: Optional[str] = Field(
+        default=None,
+        max_length=4000,
+        description="Corrected/interpreted version of the user's message (if different from original)"
+    )
 
     model_config = ConfigDict(extra="forbid")
 
     @classmethod
-    def from_text(cls, text: str) -> "SendChatResponse":
-        return cls(responseMessage=ResponseMessage(text=text))
+    def from_text(cls, text: str, corrected_user_message: Optional[str] = None) -> "SendChatResponse":
+        return cls(
+            responseMessage=ResponseMessage(text=text),
+            correctedUserMessage=corrected_user_message
+        )

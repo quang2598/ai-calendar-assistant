@@ -4,6 +4,7 @@ import { verifyFirebaseIdToken } from "@/src/lib/firebaseAdmin";
 import {
   BackendChatError,
   processBackendChatRequest,
+  processBackendChatStreamRequest,
   toBackendChatError,
   type BackendChatRequest,
 } from "@/src/server/chat";
@@ -112,7 +113,7 @@ function parseBearerToken(request: NextRequest): string {
   return token;
 }
 
-export async function POST(request: NextRequest): Promise<NextResponse> {
+export async function POST(request: NextRequest): Promise<NextResponse | Response> {
   try {
     const body = await parseJsonBody(request);
     const idToken = parseBearerToken(request);
@@ -124,8 +125,26 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       message: parsedBody.message,
       userLocation: parsedBody.userLocation,
     };
-    const data = await processBackendChatRequest(payload, idToken, decoded.uid);
 
+    // Streaming mode when X-Stream header is set
+    if (request.headers.get("x-stream") === "true") {
+      const { stream, conversationId } = await processBackendChatStreamRequest(
+        payload,
+        idToken,
+        decoded.uid,
+      );
+
+      return new Response(stream, {
+        headers: {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+          Connection: "keep-alive",
+          "X-Conversation-Id": conversationId,
+        },
+      });
+    }
+
+    const data = await processBackendChatRequest(payload, idToken, decoded.uid);
     return NextResponse.json({ data }, { status: 200 });
   } catch (error) {
     return errorResponse(error);

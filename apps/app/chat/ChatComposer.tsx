@@ -143,7 +143,7 @@ export default function ChatComposer({
               onChange={(event) => onChange(event.target.value)}
               onKeyDown={handleKeyDown}
               placeholder={placeholder}
-              className="min-h-[60px] flex-1 resize-none rounded-2xl border border-slate-700 bg-slate-900 px-4 py-3 text-sm text-slate-300 outline-none placeholder:text-slate-500 focus:border-cyan-400/50"
+              className="min-h-[60px] flex-1 resize-none rounded-2xl border border-slate-700 bg-slate-900 px-4 py-3 text-base text-slate-300 outline-none placeholder:text-slate-500 focus:border-cyan-400/50"
             />
             {isVoiceSupported && onMicToggle && (
               <button

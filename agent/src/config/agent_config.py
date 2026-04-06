@@ -14,7 +14,7 @@ class AgentSettings(BaseSettings):
 
     agent_llm_model: str = Field(default="llama3.1", alias="AGENT_LLM_MODEL")
     agent_llm_temperature: float = Field(
-        default=0.0,
+        default=0.2,
         ge=0.0,
         le=1.0,
         alias="AGENT_LLM_TEMPERATURE",
@@ -83,7 +83,6 @@ class AgentSettings(BaseSettings):
         "google_oauth_client_secret",
         "google_oauth_token_uri",
     )
-    @classmethod
     def validate_non_empty(cls, value: str) -> str:
         cleaned = value.strip()
         if not cleaned:

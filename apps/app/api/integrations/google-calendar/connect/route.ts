@@ -34,7 +34,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     return NextResponse.redirect(consentUrl, { status: 302 });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Failed to initiate Google OAuth.";
+    const message =
+      error instanceof Error
+        ? error.message
+        : "Failed to initiate Google OAuth.";
 
     return NextResponse.json(
       {

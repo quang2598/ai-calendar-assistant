@@ -1,0 +1,112 @@
+@import "../shared/styles/global.css";
+
+/* Tab styles */
+.tab {
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.tab.active {
+  background: rgba(255, 255, 255, 0.08);
+  color: #22d3ee;
+}
+
+.tab:hover:not(.active) {
+  color: rgba(255, 255, 255, 0.7);
+}
+
+/* Tab content */
+.tab-content {
+  display: none;
+}
+
+.tab-content.active {
+  display: block;
+}
+
+/* Calendar day buttons */
+.cal-day {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  border-radius: 8px;
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  color: rgba(255, 255, 255, 0.8);
+  margin: 0 auto;
+  position: relative;
+}
+
+.cal-day:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.cal-day.other-month {
+  color: rgba(255, 255, 255, 0.15);
+}
+
+.cal-day.today {
+  background: linear-gradient(135deg, #06b6d4, #8b5cf6);
+  color: white;
+  font-weight: 600;
+}
+
+.cal-day.selected {
+  outline: 2px solid #06b6d4;
+  outline-offset: -2px;
+}
+
+/* Event dot indicator */
+.cal-day .event-dot {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: #06b6d4;
+  position: absolute;
+  bottom: 2px;
+}
+
+/* Event item */
+.event-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  margin-bottom: 8px;
+  transition: all 0.2s ease;
+}
+
+.event-item:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.event-time-bar {
+  width: 3px;
+  min-height: 32px;
+  border-radius: 2px;
+  background: linear-gradient(180deg, #06b6d4, #8b5cf6);
+  flex-shrink: 0;
+}
+
+/* History item */
+.history-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  margin-bottom: 8px;
+  transition: all 0.2s ease;
+}
+
+.history-item:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
