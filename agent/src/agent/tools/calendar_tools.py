@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime
 from typing import List, Optional
 from zoneinfo import ZoneInfo
@@ -95,11 +96,17 @@ class AddEventToCalendarInput(BaseModel):
     )
     description: Optional[str] = Field(
         default=None,
-        description="Optional event description.",
+        description=(
+            "Optional event notes only (agenda, context, reminders). "
+            "Do NOT put venue/address/business name here."
+        ),
     )
     location: Optional[str] = Field(
         default=None,
-        description="Optional event location.",
+        description=(
+            "Event location. Put address or business name here. "
+            "Examples: '123 Main Street, Eugene' or 'Asian Market'."
+        ),
     )
     invitees: Optional[List[str]] = Field(
         default=None,
@@ -138,11 +145,17 @@ class ModifyEventInput(BaseModel):
     )
     description: Optional[str] = Field(
         default=None,
-        description="New event description (optional).",
+        description=(
+            "New event notes only (agenda/context). "
+            "Do NOT place venue/address/business name here."
+        ),
     )
     location: Optional[str] = Field(
         default=None,
-        description="New event location (optional).",
+        description=(
+            "New event location (address or business name). "
+            "Use this field for venue/address updates."
+        ),
     )
     invitees: Optional[List[str]] = Field(
         default=None,
@@ -279,8 +292,116 @@ def _format_event_time_for_response(iso_datetime_str: str, timezone_name: Option
         return "(unknown time)"
     
     # For now, just return the string as-is to preserve original behavior
-    # The real issue is not formatting but how dates are calculated
+    # The real issue is not formatting but how dates are calculated  
     return iso_datetime_str
+
+
+def _strip_location_suffix_from_title(title: str, location: Optional[str]) -> str:
+    """Remove trailing ' at <location>' from title when it duplicates the location field."""
+    cleaned_title = (title or "").strip()
+    cleaned_location = (location or "").strip()
+    if not cleaned_title or not cleaned_location:
+        return cleaned_title
+
+    suffix = f" at {cleaned_location}"
+    if cleaned_title.lower().endswith(suffix.lower()):
+        return cleaned_title[: -len(suffix)].rstrip()
+    return cleaned_title
+
+
+def _extract_business_name_from_location(location: Optional[str]) -> str:
+    """Extract likely business name from location text like 'Name, 123 Street, City'."""
+    cleaned_location = (location or "").strip()
+    if not cleaned_location:
+        return ""
+
+    first_segment = cleaned_location.split(",", 1)[0].strip()
+    if not first_segment:
+        return ""
+
+    # If first segment looks like a street address, don't treat it as a business name.
+    if re.match(r"^\d+\s", first_segment):
+        return ""
+
+    return first_segment
+
+
+def _looks_like_address_text(value: str) -> bool:
+    """Heuristic: detect address-like fragments in title suffixes."""
+    cleaned = (value or "").strip().lower()
+    if not cleaned:
+        return False
+
+    if re.search(r"\d", cleaned):
+        return True
+
+    address_tokens = (" street", " st", " avenue", " ave", " road", " rd", " boulevard", " blvd", " lane", " ln", " drive", " dr")
+    return any(token in cleaned for token in address_tokens)
+
+
+def _ensure_business_name_in_title(title: str, location: Optional[str]) -> str:
+    """Keep title readable: include business name, avoid full-address suffix."""
+    cleaned_title = _strip_location_suffix_from_title(title, location)
+    cleaned_location = (location or "").strip()
+    business_name = _extract_business_name_from_location(cleaned_location)
+
+    if not cleaned_title:
+        return business_name
+    if not business_name:
+        return cleaned_title
+
+    marker = " at "
+    idx = cleaned_title.lower().find(marker)
+
+    # No business segment in title yet -> add it.
+    if idx < 0:
+        return f"{cleaned_title} at {business_name}"
+
+    prefix = cleaned_title[:idx].strip()
+    suffix = cleaned_title[idx + len(marker):].strip()
+
+    # Replace address-like or location-equal suffix with business name.
+    if not suffix or suffix.lower() == cleaned_location.lower() or _looks_like_address_text(suffix):
+        return f"{prefix} at {business_name}".strip()
+
+    return cleaned_title
+
+
+def _capitalize_business_name_in_title(title: str) -> str:
+    """Capitalize business name part in titles like 'Dinner at pho place'."""
+    cleaned_title = (title or "").strip()
+    if not cleaned_title:
+        return cleaned_title
+
+    marker = " at "
+    idx = cleaned_title.lower().find(marker)
+    if idx < 0:
+        return cleaned_title
+
+    prefix = cleaned_title[:idx].strip()
+    business_name = cleaned_title[idx + len(marker):].strip()
+    if not business_name:
+        return cleaned_title
+
+    capitalized_business_name = " ".join(
+        part.capitalize() if not (len(part) > 1 and part.isupper()) else part
+        for part in business_name.split()
+    )
+    return f"{prefix} at {capitalized_business_name}"
+
+
+def _extract_location_from_title(title: Optional[str]) -> str:
+    """Extract location/business segment from titles like 'Dinner at Panda Express'."""
+    cleaned_title = (title or "").strip()
+    if not cleaned_title:
+        return ""
+
+    marker = " at "
+    idx = cleaned_title.lower().find(marker)
+    if idx < 0:
+        return ""
+
+    return cleaned_title[idx + len(marker):].strip()
 
 
 def _verify_agent_created_event(uid: str, event_id: str) -> bool:
@@ -291,7 +412,7 @@ def _verify_agent_created_event(uid: str, event_id: str) -> bool:
     """
     agent_event = get_agent_created_event(uid=uid, google_event_id=event_id)
     found = agent_event is not None
-    logger.info(f"Verify agent created event: uid={uid}, event_id={event_id}, found={found}")
+    logger.info("Verify agent created event: event_id={}, found={}", event_id, found)
     return found
 
 
@@ -393,7 +514,7 @@ def _add_event_to_calendar_impl(
 ) -> str:
     missing_fields: List[str] = []
 
-    cleaned_title = (title or "").strip().capitalize()
+    cleaned_title = (title or "").strip()
     cleaned_description = (description or "").strip().capitalize()
     cleaned_location = (location or "").strip()
     cleaned_start_time = (start_time or "").strip()
@@ -413,9 +534,14 @@ def _add_event_to_calendar_impl(
             missing_fields=missing_fields,
         )
 
-    # Enforce location in title: append location to title if provided
-    if cleaned_location:
-        cleaned_title = f"{cleaned_title} at {cleaned_location}"
+    # Keep business name in title, but avoid adding full address into title.
+    cleaned_title = _ensure_business_name_in_title(cleaned_title, cleaned_location)
+    cleaned_title = _capitalize_business_name_in_title(cleaned_title)
+
+    # Keep location user-friendly: prefer explicit location (address/business),
+    # otherwise derive business name from title.
+    if not cleaned_location:
+        cleaned_location = _extract_location_from_title(cleaned_title)
 
     try:
         start_dt = _parse_datetime(cleaned_start_time)
@@ -585,22 +711,22 @@ def _modify_event_impl(
         agent_event = get_agent_created_event(uid=uid, google_event_id=event_id.strip())
         current_snapshot = agent_event.snapshot if agent_event else {}
         
-        # Enforce location in title: if location is being changed, also update the title
+        # Keep title independent from location updates.
+        # Only sanitize explicit title updates when location is provided.
         modified_title = title
-        if location is not None:
-            location_cleaned = location.strip()
-            # Get the current title from the snapshot
-            current_title = current_snapshot.get("title", "") if current_snapshot else ""
-            if modified_title is None:
-                modified_title = current_title
-            
-            # Remove old location from title if it exists (format: "Title at Location")
-            if " at " in modified_title:
-                modified_title = modified_title.rsplit(" at ", 1)[0].strip()
-            
-            # Add new location to title
-            if location_cleaned:
-                modified_title = f"{modified_title} at {location_cleaned}"
+        if modified_title is not None:
+            modified_title = _ensure_business_name_in_title(modified_title, location)
+            modified_title = _capitalize_business_name_in_title(modified_title)
+
+        modified_location = location.strip() if isinstance(location, str) else None
+        if modified_location is not None and not modified_location:
+            modified_location = _extract_location_from_title(modified_title)
+            if not modified_location:
+                modified_location = None
+        elif modified_location is None and modified_title is not None:
+            derived_location = _extract_location_from_title(modified_title)
+            if derived_location:
+                modified_location = derived_location
         
         # IMPORTANT: Fetch the CURRENT event from Google Calendar to get fresh state
         # This ensures we capture what actually changed, not stale stored snapshots
@@ -639,7 +765,7 @@ def _modify_event_impl(
                 end_time=end_dt,
                 timezone_name=timezone,
                 description=description,
-                location=location,
+                location=modified_location,
                 invitees=invitees,
                 calendar_id=calendar_id,
             ),
@@ -816,10 +942,11 @@ def _delete_event_impl(
     event_title = ""
     if agent_event and agent_event.snapshot:
         event_title = agent_event.snapshot.get("title", "")
+    display_title = event_title or "this event"
     
     return _json_tool_response(
         status="success",
-        message=f"Calendar event {event_id.strip()} has been deleted successfully. If you change your mind, I can restore this event using the rollback feature. Just let me know if you'd like me to bring it back!",
+        message=f"{display_title} has been deleted successfully. If you change your mind, I can restore it using rollback. Just let me know if you'd like me to bring it back!",
         event={
             "id": event_id.strip(),
             "title": event_title,
@@ -840,11 +967,17 @@ def _rollback_event_impl(
     """
     try:
         agent_event = get_agent_created_event(uid=uid, google_event_id=event_id)
+        event_title = ""
+        if agent_event and agent_event.snapshot:
+            event_title = str(agent_event.snapshot.get("title", "") or "").strip()
+        elif agent_event and agent_event.previous_snapshot:
+            event_title = str(agent_event.previous_snapshot.get("title", "") or "").strip()
+        display_title = event_title or "this event"
         
         if not agent_event:
             return _json_tool_response(
                 status="not_found",
-                message=f"Event {event_id} not found in agent-created events.",
+                message="I couldn't find that event in agent-created events.",
             )
         
         # Case 1: previous_snapshot is null (event just created) - delete the event
@@ -872,7 +1005,7 @@ def _rollback_event_impl(
                 except Exception as exc:
                     logger.warning("Failed to mark action as rolled back: {}", exc)
                 
-                success_msg = f"Rollback completed: Calendar event {event_id} (which was just created) has been deleted."
+                success_msg = f"Rollback completed: {display_title} (which was just created) has been deleted."
                 logger.info(f"Agent response: {success_msg}")
                 return _json_tool_response(
                     status="success",
@@ -940,7 +1073,8 @@ def _rollback_event_impl(
                 except Exception as exc:
                     logger.warning("Failed to mark recovery add action as already rolled back: {}", exc)
                 
-                success_msg = f"Rollback completed: Deleted calendar event has been restored (with a new event ID). Original ID was {event_id}, new ID is {restored_event_id}."
+                restored_title = str(restored_event_data.get("title", "") or "").strip() or display_title
+                success_msg = f"Rollback completed: {restored_title} has been restored."
                 logger.info(f"Agent response: {success_msg}")
                 return _json_tool_response(
                     status="success",
@@ -991,7 +1125,8 @@ def _rollback_event_impl(
                 except Exception as exc:
                     logger.warning("Failed to mark action as rolled back: {}", exc)
                 
-                success_msg = f"Rollback completed: Calendar event {event_id} has been restored to its previous state."
+                restored_title = str(restored_event_data.get("title", "") or "").strip() or display_title
+                success_msg = f"Rollback completed: {restored_title} has been restored to its previous state."
                 logger.info(f"Agent response: {success_msg}")
                 return _json_tool_response(
                     status="success",
@@ -1018,7 +1153,7 @@ def _rollback_event_impl(
     
     return _json_tool_response(
         status="success",
-        message=f"Calendar event {event_id} has been rolled back to its previous state.",
+        message="The event has been rolled back to its previous state.",
         event={
             "id": restored_event.event_id,
             "title": restored_event.title,
@@ -1060,11 +1195,17 @@ def _rollback_event_tool_impl(uid: str, event_id: str, calendar_id: Optional[str
         if event.google_event_id == event_id.strip():
             event_found = event
             break
+
+    event_display_title = "this event"
+    if event_found:
+        snapshot = event_found.snapshot or event_found.previous_snapshot or {}
+        if isinstance(snapshot, dict):
+            event_display_title = str(snapshot.get("title") or "").strip() or "this event"
     
     if not event_found:
         return _json_tool_response(
             status="unauthorized",
-            message=f"I can only rollback events that I previously created. Event {event_id.strip()} was not created by me.",
+            message="I can only rollback events that I previously created.",
         )
     
     # Get the latest action to verify this event has the latest action
@@ -1086,7 +1227,7 @@ def _rollback_event_tool_impl(uid: str, event_id: str, calendar_id: Optional[str
     if latest_action.event_id != event_id.strip():
         return _json_tool_response(
             status="invalid_state",
-            message=f"Cannot rollback event {event_id.strip()}: the most recent action is on a different event. "
+            message=f"Cannot rollback {event_display_title}: the most recent action is on a different event. "
                    f"I can only undo the most recent action. Would you like to undo the most recent action instead?",
         )
     
@@ -1134,7 +1275,11 @@ def _list_agent_events_impl(uid: str) -> str:
             snapshot_to_use = event.previous_snapshot
         else:
             # Skip events with no usable snapshot
-            logger.info(f"Skipping event with no snapshot: event_id={event.google_event_id}, uid={uid}, status={event.status}")
+            logger.info(
+                "Skipping event with no snapshot: event_id={}, status={}",
+                event.google_event_id,
+                event.status,
+            )
             continue
         
         events.append({
@@ -1331,6 +1476,8 @@ def build_calendar_tools(uid: str) -> List:
         
         Requires title, start_time, and end_time.
         Optional fields include description, location, invitees, and timezone.
+        IMPORTANT: Put venue/address/business name in `location`, not `description`.
+        Use `description` for notes only.
         If required fields are missing, the tool returns missing_fields.
         
         After successful creation, the event is automatically tracked by the agent.
@@ -1340,8 +1487,8 @@ def build_calendar_tools(uid: str) -> List:
             start_time: Event start datetime in ISO-8601 format (required)
             end_time: Event end datetime in ISO-8601 format (required)
             timezone: Optional IANA timezone
-            description: Optional event description
-            location: Optional event location
+            description: Optional event notes (not address/business)
+            location: Optional event location (address or business name)
             invitees: Optional list of invitee email addresses
             calendar_id: Optional calendar id
             
@@ -1378,6 +1525,7 @@ def build_calendar_tools(uid: str) -> List:
         Attempting to modify pre-existing or user-created events will be rejected.
         
         At least one field (other than event_id) must be provided to modify.
+        IMPORTANT: Put venue/address/business name updates in `location`, not `description`.
         
         Args:
             event_id: The event ID to modify (required, must be agent-created)
@@ -1385,8 +1533,8 @@ def build_calendar_tools(uid: str) -> List:
             start_time: New start datetime in ISO-8601 format (optional)
             end_time: New end datetime in ISO-8601 format (optional)
             timezone: Optional IANA timezone for new times
-            description: New event description (optional)
-            location: New event location (optional)
+            description: New event notes (optional, not address/business)
+            location: New event location (optional, address or business name)
             invitees: New list of invitee email addresses (optional)
             calendar_id: Optional calendar id
             

@@ -286,6 +286,188 @@ def test_add_event_to_calendar_preserves_local_wall_clock_time_for_timezone(
     assert payload["event"]["start"] == "2026-03-15T10:00:00-05:00"
 
 
+def test_add_event_to_calendar_capitalizes_business_name_in_title(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(calendar_tools, "get_user_calendar_timezone", lambda uid, calendar_id=None: "America/Chicago")
+    captured = {}
+    monkeypatch.setattr(
+        calendar_tools,
+        "create_user_calendar_event",
+        lambda uid, request: captured.update({"title": request.title})
+        or CalendarEvent(
+            event_id="evt-1",
+            title=request.title,
+            start=request.start_time.isoformat(),
+            end=request.end_time.isoformat(),
+            status="confirmed",
+        ),
+    )
+
+    result = calendar_tools._add_event_to_calendar_impl(
+        uid="user-1",
+        title="Dinner at pho the good times asian bistro",
+        start_time="2026-03-13T09:00:00+00:00",
+        end_time="2026-03-13T10:00:00+00:00",
+        timezone=None,
+        description=None,
+        location=None,
+        invitees=None,
+        calendar_id=None,
+    )
+
+    payload = json.loads(result)
+    assert payload["status"] == "success"
+    assert payload["event"]["title"] == "Dinner at Pho The Good Times Asian Bistro"
+    assert captured["title"] == "Dinner at Pho The Good Times Asian Bistro"
+
+
+def test_add_event_to_calendar_derives_business_name_from_location(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(calendar_tools, "get_user_calendar_timezone", lambda uid, calendar_id=None: "America/Chicago")
+    captured = {}
+    monkeypatch.setattr(
+        calendar_tools,
+        "create_user_calendar_event",
+        lambda uid, request: captured.update({"title": request.title})
+        or CalendarEvent(
+            event_id="evt-1",
+            title=request.title,
+            start=request.start_time.isoformat(),
+            end=request.end_time.isoformat(),
+            status="confirmed",
+        ),
+    )
+
+    result = calendar_tools._add_event_to_calendar_impl(
+        uid="user-1",
+        title="Dinner",
+        start_time="2026-03-13T09:00:00+00:00",
+        end_time="2026-03-13T10:00:00+00:00",
+        timezone=None,
+        description=None,
+        location="pho the good times asian bistro, 1395 University Street, Eugene",
+        invitees=None,
+        calendar_id=None,
+    )
+
+    payload = json.loads(result)
+    assert payload["status"] == "success"
+    assert payload["event"]["title"] == "Dinner at Pho The Good Times Asian Bistro"
+    assert captured["title"] == "Dinner at Pho The Good Times Asian Bistro"
+
+
+def test_add_event_to_calendar_replaces_address_suffix_with_business_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(calendar_tools, "get_user_calendar_timezone", lambda uid, calendar_id=None: "America/Chicago")
+    captured = {}
+    monkeypatch.setattr(
+        calendar_tools,
+        "create_user_calendar_event",
+        lambda uid, request: captured.update({"title": request.title})
+        or CalendarEvent(
+            event_id="evt-1",
+            title=request.title,
+            start=request.start_time.isoformat(),
+            end=request.end_time.isoformat(),
+            status="confirmed",
+        ),
+    )
+
+    result = calendar_tools._add_event_to_calendar_impl(
+        uid="user-1",
+        title="Dinner at 1395 University Street, Eugene",
+        start_time="2026-03-13T09:00:00+00:00",
+        end_time="2026-03-13T10:00:00+00:00",
+        timezone=None,
+        description=None,
+        location="pho the good times asian bistro, 1395 University Street, Eugene",
+        invitees=None,
+        calendar_id=None,
+    )
+
+    payload = json.loads(result)
+    assert payload["status"] == "success"
+    assert payload["event"]["title"] == "Dinner at Pho The Good Times Asian Bistro"
+    assert captured["title"] == "Dinner at Pho The Good Times Asian Bistro"
+
+
+def test_add_event_to_calendar_sets_location_from_business_name_when_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(calendar_tools, "get_user_calendar_timezone", lambda uid, calendar_id=None: "America/Chicago")
+    captured = {}
+    monkeypatch.setattr(
+        calendar_tools,
+        "create_user_calendar_event",
+        lambda uid, request: captured.update({"location": request.location})
+        or CalendarEvent(
+            event_id="evt-1",
+            title=request.title,
+            start=request.start_time.isoformat(),
+            end=request.end_time.isoformat(),
+            status="confirmed",
+            location=request.location,
+        ),
+    )
+
+    result = calendar_tools._add_event_to_calendar_impl(
+        uid="user-1",
+        title="Dinner at pho the good times asian bistro",
+        start_time="2026-03-13T09:00:00+00:00",
+        end_time="2026-03-13T10:00:00+00:00",
+        timezone=None,
+        description=None,
+        location=None,
+        invitees=None,
+        calendar_id=None,
+    )
+
+    payload = json.loads(result)
+    assert payload["status"] == "success"
+    assert payload["event"]["location"] == "Pho The Good Times Asian Bistro"
+    assert captured["location"] == "Pho The Good Times Asian Bistro"
+
+
+def test_add_event_to_calendar_keeps_explicit_address_in_location(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(calendar_tools, "get_user_calendar_timezone", lambda uid, calendar_id=None: "America/Chicago")
+    captured = {}
+    monkeypatch.setattr(
+        calendar_tools,
+        "create_user_calendar_event",
+        lambda uid, request: captured.update({"location": request.location})
+        or CalendarEvent(
+            event_id="evt-1",
+            title=request.title,
+            start=request.start_time.isoformat(),
+            end=request.end_time.isoformat(),
+            status="confirmed",
+            location=request.location,
+        ),
+    )
+
+    result = calendar_tools._add_event_to_calendar_impl(
+        uid="user-1",
+        title="Dinner at pho the good times asian bistro",
+        start_time="2026-03-13T09:00:00+00:00",
+        end_time="2026-03-13T10:00:00+00:00",
+        timezone=None,
+        description=None,
+        location="1395 University Street, Eugene",
+        invitees=None,
+        calendar_id=None,
+    )
+
+    payload = json.loads(result)
+    assert payload["status"] == "success"
+    assert payload["event"]["location"] == "1395 University Street, Eugene"
+    assert captured["location"] == "1395 University Street, Eugene"
+
+
 def test_build_calendar_tools_rejects_empty_uid() -> None:
     with pytest.raises(ValueError):
         calendar_tools.build_calendar_tools("   ")

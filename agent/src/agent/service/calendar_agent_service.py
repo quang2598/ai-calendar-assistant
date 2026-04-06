@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import json
 from contextvars import ContextVar
+from functools import lru_cache
 from typing import List, Optional
 from dataclasses import dataclass
 
@@ -28,6 +29,26 @@ class AgentResponse:
 
 # Request-scoped context for timezone caching to avoid redundant Google Calendar API calls
 _request_timezone_cache: ContextVar[str] = ContextVar("request_timezone_cache", default="")
+
+
+@lru_cache(maxsize=256)
+def _get_cached_calendar_tools(uid: str):
+    """Cache calendar tools by user id to avoid rebuilding every turn."""
+    return tuple(build_calendar_tools(uid=uid))
+
+
+@lru_cache(maxsize=256)
+def _get_cached_location_tools(
+    google_places_api_key: str,
+    user_location: Optional[tuple[float, float]],
+):
+    """Cache location tools and maps client by API key and coarse location."""
+    return tuple(
+        build_location_tools(
+            google_places_api_key=google_places_api_key,
+            user_location=user_location,
+        )
+    )
 
 
 def _parse_agent_response(raw_output: str, fallback_interpreted_question: str = "") -> AgentResponse:
@@ -174,7 +195,7 @@ def _get_cached_timezone(uid: str) -> Optional[str]:
     """Get timezone from cache if available, otherwise fetch from Google Calendar."""
     cached = _request_timezone_cache.get()
     if cached:
-        logger.debug("Using cached timezone for request: {}", cached)
+        logger.info("Using cached timezone for request: {}", cached)
         return cached
     
     # Not in cache, fetch from Google Calendar
@@ -246,16 +267,19 @@ def build_calendar_agent(uid: str, user_timezone: str, user_location: Optional[t
     Returns:
         A calendar agent instance
     """
-    # Build calendar tools
-    calendar_tools = build_calendar_tools(uid=uid)
+    # Build calendar tools (cached by uid)
+    cleaned_uid = uid.strip()
+    calendar_tools = list(_get_cached_calendar_tools(cleaned_uid))
     
     # Build location tools if API key is available
     location_tools = []
     if agent_settings.google_places_api_key:
         try:
-            location_tools = build_location_tools(
-                google_places_api_key=agent_settings.google_places_api_key,
-                user_location=user_location,
+            location_tools = list(
+                _get_cached_location_tools(
+                    agent_settings.google_places_api_key.strip(),
+                    user_location,
+                )
             )
         except ValueError as exc:
             logger.warning("Could not build location tools: {}", exc)
