@@ -123,7 +123,7 @@ function HomePageContent() {
     onSilenceTimeout: useCallback(() => {
       handleSilenceTimeoutRef.current();
     }, []),
-    silenceTimeoutMs: 700,
+    silenceTimeoutMs: 1200,
   });
 
   const {
@@ -145,14 +145,16 @@ function HomePageContent() {
     }
   }
 
-  const {
-    isSpeaking,
-    speak,
-    stop: stopSpeaking,
-  } = useSpeechSynthesis();
+  const { isSpeaking, speak, stop: stopSpeaking } = useSpeechSynthesis();
 
-  const { getVisibleText, isRevealing, setWaitingForReveal, startReveal, startRevealSynced, stopReveal } =
-    useTextReveal();
+  const {
+    getVisibleText,
+    isRevealing,
+    setWaitingForReveal,
+    startReveal,
+    startRevealSynced,
+    stopReveal,
+  } = useTextReveal();
 
   // Keep refs for TTS and reveal callbacks
   const speakRef = useRef(speak);

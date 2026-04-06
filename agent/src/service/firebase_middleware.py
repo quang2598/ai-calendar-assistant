@@ -74,7 +74,7 @@ class FirebaseAuthMiddleware(BaseHTTPMiddleware):
             request.state.decoded_token = decoded_token
             request.state.uid = decoded_token["uid"]
             
-            logger.debug("Firebase token verified for uid={}", decoded_token["uid"])
+            logger.debug("Firebase token verified")
             
         except FirebaseAuthError as exc:
             logger.warning("Firebase token verification failed: {}", exc)

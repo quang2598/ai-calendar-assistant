@@ -4,9 +4,11 @@ SHELL := /bin/bash
 #------------------Dev Commands------------------#
 run-agent-win:
 	@echo "Running agent locally..."
+	bash -c 'cd agent && source venv/Scripts/activate && [ -f .env ] && set -a && . .env && set +a && cd src && uvicorn main:app --host 0.0.0.0 --port 8000'; \
+	_temp=$$?; \
 	echo "\nCleaning up Python cache..."; \
 	find . -type d \( -name ".pytest_cache" -o -name "__pycache__" \) -exec rm -rvf {} +; \
-	bash -c 'cd agent && [ -f .env ] && set -a && . .env && set +a; cd src && uvicorn main:app --host 0.0.0.0 --port 8000'
+	exit $$_temp
 
 run-agent-mac:
 	@echo "Running agent locally..."

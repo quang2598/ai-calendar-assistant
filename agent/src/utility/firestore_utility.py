@@ -61,7 +61,7 @@ def _to_conversation_message(document: DocumentSnapshot) -> Optional[Conversatio
 @trace_span("fetch_conversation_messages")
 def fetch_conversation_messages(uid: str, conversation_id: str, limit: int = 10) -> List[ConversationMessage]:
     """
-    Fetch conversation messages ordered by createdAt ascending.
+    Fetch conversation messages ordered by createdAt descending (latest first).
     
     Args:
         uid: User ID
@@ -78,7 +78,7 @@ def fetch_conversation_messages(uid: str, conversation_id: str, limit: int = 10)
         .collection("conversations")
         .document(cleaned_conversation_id)
         .collection("messages")
-        .order_by("createdAt")
+        .order_by("createdAt", direction="DESCENDING")
         .limit(limit)
     )
 
@@ -261,8 +261,7 @@ def store_agent_created_event(
         merge=False,
     )
     logger.info(
-        "Stored agent-created event record: uid={}, eventId={}, calendar={}",
-        cleaned_uid,
+        "Stored agent-created event record: eventId={}, calendar={}",
         cleaned_event_id,
         cleaned_calendar_id,
     )
@@ -394,8 +393,7 @@ def delete_agent_created_event_record(uid: str, google_event_id: str) -> None:
     
     _agent_created_events_collection(cleaned_uid).document(cleaned_event_id).delete()
     logger.info(
-        "Deleted Firestore record for agent-created event: uid={}, eventId={}",
-        cleaned_uid,
+        "Deleted Firestore record for agent-created event: eventId={}",
         cleaned_event_id,
     )
 
@@ -485,8 +483,7 @@ def store_action_history(
         merge=False,
     )
     logger.info(
-        "Stored action history record: uid={}, actionType={}, eventId={}, eventTitle={}, description={}",
-        cleaned_uid,
+        "Stored action history record: actionType={}, eventId={}, eventTitle={}, description={}",
         cleaned_action_type,
         cleaned_event_id,
         cleaned_title,
@@ -616,8 +613,7 @@ def mark_action_as_rolled_back(uid: str, event_id: str) -> None:
     
     if not actions:
         logger.warning(
-            "No action history found to mark as rolled back: uid={}, eventId={}",
-            cleaned_uid,
+            "No action history found to mark as rolled back: eventId={}",
             cleaned_event_id,
         )
         return
@@ -647,16 +643,14 @@ def mark_action_as_rolled_back(uid: str, event_id: str) -> None:
     if most_recent_doc:
         most_recent_doc.reference.update({"alreadyRolledBack": True})
         logger.info(
-            "Marked action as rolled back: uid={}, eventId={}, actionType={}, timestamp={}",
-            cleaned_uid,
+            "Marked action as rolled back: eventId={}, actionType={}, timestamp={}",
             cleaned_event_id,
             most_recent.action_type,
             most_recent_timestamp,
         )
     else:
         logger.warning(
-            "Could not find action document to mark as rolled back: uid={}, eventId={}",
-            cleaned_uid,
+            "Could not find action document to mark as rolled back: eventId={}",
             cleaned_event_id,
         )
 

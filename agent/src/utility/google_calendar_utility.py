@@ -157,7 +157,7 @@ def _execute_with_auth_retry(uid: str, operation: Callable[[Resource], object]) 
         if not _is_auth_http_error(exc):
             raise
 
-    logger.warning("Calendar API auth error detected. Refreshing token and retrying for uid={}", uid)
+    logger.warning("Calendar API auth error detected. Refreshing token and retrying")
     refresh_user_google_access_token(uid=uid)
     service = _build_calendar_service(uid=uid)
     return operation(service)
@@ -253,8 +253,7 @@ def get_user_calendar_timezone(uid: str, calendar_id: Optional[str] = None) -> s
         response = _execute_with_auth_retry(uid=uid, operation=settings_operation)
     except Exception as exc:
         logger.warning(
-            "Unable to resolve Google Calendar settings timezone for uid={}; using fallback. Error: {}",
-            uid,
+            "Unable to resolve Google Calendar settings timezone; using fallback. Error: {}",
             exc,
         )
     else:
@@ -270,8 +269,7 @@ def get_user_calendar_timezone(uid: str, calendar_id: Optional[str] = None) -> s
         response = _execute_with_auth_retry(uid=uid, operation=calendar_operation)
     except Exception as exc:
         logger.warning(
-            "Unable to resolve Google Calendar timezone from calendar metadata for uid={}; using fallback. Error: {}",
-            uid,
+            "Unable to resolve Google Calendar timezone from calendar metadata; using fallback. Error: {}",
             exc,
         )
         logger.info("User calendar fallback timezone: {}", fallback_timezone)
@@ -346,7 +344,7 @@ def refresh_user_google_access_token(uid: str) -> str:
         raise RuntimeError(f"Google token refresh returned empty access token for user: {uid}")
 
     update_user_google_access_token(uid=uid, access_token=refreshed_access_token)
-    logger.info("Google access token refreshed for user: {}", uid)
+    logger.info("Google access token refreshed for user")
     return refreshed_access_token
 
 
@@ -354,7 +352,7 @@ def refresh_user_google_access_token(uid: str) -> str:
 def get_valid_user_google_access_token(uid: str) -> str:
     token = fetch_user_google_token(uid=uid)
     if _is_access_token_expired(token):
-        logger.info("Detected missing or expired Google access token for user: {}", uid)
+        logger.info("Detected missing or expired Google access token for user")
         return refresh_user_google_access_token(uid=uid)
     return str(token.access_token)
 
@@ -718,7 +716,7 @@ def delete_user_calendar_event(
             raise RuntimeError(f"Calendar event not found: event_id={cleaned_event_id}")
         raise RuntimeError(f"Failed to delete calendar event {cleaned_event_id}: {exc}") from exc
     
-    logger.info("Deleted calendar event: uid={}, eventId={}", uid, cleaned_event_id)
+    logger.info("Deleted calendar event: eventId={}", cleaned_event_id)
 
 
 @trace_span("rollback_user_calendar_event")
@@ -795,5 +793,5 @@ def rollback_user_calendar_event(
             raise RuntimeError(f"Cannot restore deleted event using rollback. Event {cleaned_event_id} no longer exists. Use create event instead.") from exc
         raise RuntimeError(f"Failed to restore calendar event: {exc}") from exc
     
-    logger.info("Rolled back calendar event: uid={}, eventId={}", uid, cleaned_event_id)
+    logger.info("Rolled back calendar event: eventId={}", cleaned_event_id)
     return _map_calendar_event(restored_event or {})

@@ -407,8 +407,8 @@ class GetServiceRecommendationInput(BaseModel):
 
 class GetPlaceDetailsInput(BaseModel):
     """Input model for getting detailed information about a place."""
-    place_id: str = Field(
-        description="Google Places ID of the place to get details for."
+    place_name: str = Field(
+        description="Business/place name to get details for. Example: 'Pho The Good Times Asian Bistro'."
     )
     include_reviews: bool = Field(
         default=True,
@@ -591,6 +591,34 @@ def _get_cuisine_keyword(service_type: str) -> Optional[str]:
     """
     service_lower = service_type.lower().strip()
     return CUISINE_KEYWORDS.get(service_lower)
+
+
+def _lookup_place_id_by_name(
+    gmaps_client: googlemaps.Client,
+    place_name: str,
+    user_location: Optional[tuple[float, float]] = None,
+) -> Optional[str]:
+    """Look up Google Places place_id from a human-readable place name."""
+    query = (place_name or "").strip()
+    if not query:
+        return None
+
+    try:
+        search_kwargs = {"query": query}
+        if user_location and len(user_location) == 2:
+            search_kwargs["location"] = user_location
+
+        result = gmaps_client.places(**search_kwargs)
+        if result.get("status") != "OK":
+            return None
+
+        places = result.get("results", [])
+        if not places:
+            return None
+
+        return places[0].get("place_id")
+    except Exception:
+        return None
 
 
 @trace_span("tool_confirm_user_location")
@@ -849,7 +877,6 @@ def _get_place_details_impl(
             "formatted_phone_number",
             "opening_hours",
             "business_status",
-            "types",
             "reviews" if include_reviews else None,
         ]
         fields = [f for f in fields if f is not None]
@@ -987,6 +1014,10 @@ def build_location_tools(
         Searches for nearby services with smart filtering. For cuisine-specific searches
         (e.g., 'vietnamese restaurant', 'thai food'), the system uses keyword filtering to
         return only that cuisine type, avoiding unrelated results like hotels or other stores.
+
+        Use this tool ONLY when the user is searching/discovering options.
+        Do NOT use this tool for follow-up details about a specific already-listed place.
+        For follow-up detail requests, use get_place_details with the relevant place_id.
         
         Supported service types: barbershop, hair salon, beauty salon, restaurant,
         mechanic, car repair, grocery store, gas station, pharmacy, coffee shop, cafe,
@@ -1025,24 +1056,41 @@ def build_location_tools(
 
     @tool(args_schema=GetPlaceDetailsInput)
     def get_place_details(
-        place_id: str,
+        place_name: str,
         include_reviews: bool = True,
     ) -> str:
         """Get detailed information about a specific place.
         
         Retrieves comprehensive details including website, phone, hours,
         and customer reviews for a place found in search results.
+
+        Preferred for follow-up user requests like:
+        - "more details"
+        - "tell me more about <place name>"
+        - "details for the first/second option"
         
         Args:
-            place_id: Google Places ID of the place
+            place_name: Human-readable business/place name
             include_reviews: Whether to include customer reviews (default True)
             
         Returns:
             JSON string with place details and reviews
         """
+        resolved_place_id = _lookup_place_id_by_name(
+            gmaps_client=gmaps_client,
+            place_name=place_name,
+            user_location=user_location,
+        )
+
+        if not resolved_place_id:
+            return _json_tool_response(
+                status="no_results",
+                message=f"Could not find place '{place_name}'. Please provide a more specific name.",
+            )
+
         return _get_place_details_impl(
             gmaps_client=gmaps_client,
-            place_id=place_id,
+            place_id=resolved_place_id,
             include_reviews=include_reviews,
         )
 

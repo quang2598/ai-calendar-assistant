@@ -39,7 +39,7 @@ def verify_firebase_token(id_token: str) -> Dict[str, Any]:
         if not uid:
             raise FirebaseAuthError("Token missing 'uid' claim")
         
-        logger.debug("Firebase token verified for uid={}", uid)
+        logger.debug("Firebase token verified")
         return decoded_token
         
     except auth.ExpiredIdTokenError as exc:

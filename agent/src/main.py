@@ -145,8 +145,7 @@ async def send_chat(request: Request, payload: SendChatRequest) -> SendChatRespo
 async def rollback_event(request: Request) -> dict:
     """Rollback (undo) a calendar event modification.
     
-    This endpoint is called from the Next.js backend and doesn't require JWT auth
-    since it's a trusted backend-to-backend call.
+    This endpoint is called from the Next.js backend.
     """
     try:
         body = await request.json()
