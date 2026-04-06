@@ -3,7 +3,13 @@
   "name": "VietCalenAI",
   "version": "0.1.0",
   "description": "Chrome extension shell for VietCalenAI.",
-  "permissions": ["sidePanel", "storage"],
+  "permissions": ["identity", "sidePanel", "storage"],
+  "host_permissions": [
+    "http://localhost:3000/*",
+    "https://accounts.google.com/*",
+    "https://identitytoolkit.googleapis.com/*",
+    "https://securetoken.googleapis.com/*"
+  ],
   "background": {
     "service_worker": "background.js",
     "type": "module"
