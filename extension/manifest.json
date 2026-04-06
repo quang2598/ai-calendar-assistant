@@ -1,0 +1,18 @@
+{
+  "manifest_version": 3,
+  "name": "VietCalenAI",
+  "version": "0.1.0",
+  "description": "Chrome extension shell for VietCalenAI.",
+  "permissions": ["sidePanel", "storage"],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "VietCalenAI",
+    "default_popup": "popup/popup.html"
+  },
+  "side_panel": {
+    "default_path": "sidepanel/sidepanel.html"
+  }
+}
