@@ -4,6 +4,7 @@ const appElement = document.querySelector("[data-popup-app]");
 let currentState = defaultSessionState;
 let pendingAction = null;
 let errorMessage = null;
+let isCheckingGeolocation = false;
 
 function getUserLabel(user) {
   if (!user) {
@@ -25,9 +26,43 @@ function getCalendarStatusText(calendar) {
   return "Google Calendar is connected.";
 }
 
+function getGeolocationStatusText(permissions) {
+  const status = permissions?.geolocation ?? "unknown";
+
+  if (status === "granted") {
+    return "Location access is enabled.";
+  }
+
+  return "Location access is not enabled yet.";
+}
+
+function getGeolocationSetupMessage(permissions) {
+  const status = permissions?.geolocation ?? "unknown";
+
+  if (status === "granted") {
+    return "Location access is enabled.";
+  }
+
+  if (status === "denied") {
+    return "Turning on location would help VietCalenAI personalize the experience better. You can check location access again whenever you're ready.";
+  }
+
+  return "Turning on location would help VietCalenAI personalize the experience better. Check location access to see if it is available.";
+}
+
 function getActionLabel(action, calendarStatus) {
   if (action === "sign-in") {
     return pendingAction === "sign-in" ? "Opening Google..." : "Continue with Google";
+  }
+
+  if (action === "request-geolocation") {
+    if (pendingAction === "request-geolocation") {
+      return "Checking Location...";
+    }
+
+    return currentState.permissions?.geolocation === "denied"
+      ? "Try Location Again"
+      : "Check Location Access";
   }
 
   if (action === "sign-out") {
@@ -42,6 +77,88 @@ function getActionLabel(action, calendarStatus) {
   return pendingAction === "connect-calendar" ? "Opening Google..." : idleLabel;
 }
 
+function setPermissionState(nextPermissions) {
+  const nextState = {
+    ...currentState,
+    permissions: {
+      ...currentState.permissions,
+      ...nextPermissions,
+    },
+  };
+
+  currentState = nextState;
+  chrome.storage.local.set({
+    [SESSION_STORAGE_KEY]: nextState,
+  });
+  render(nextState);
+}
+
+async function requestGeolocationPermission() {
+  if (!navigator.geolocation) {
+    throw new Error("Geolocation is not available in this extension popup.");
+  }
+
+  return new Promise((resolve, reject) => {
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        console.log("VietCalenAI geolocation:", {
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+        });
+        setPermissionState({ geolocation: "granted" });
+        resolve();
+      },
+      (error) => {
+        if (error?.code === error.PERMISSION_DENIED) {
+          setPermissionState({ geolocation: "denied" });
+          reject(new Error("Location access is not available."));
+          return;
+        }
+
+        setPermissionState({ geolocation: "denied" });
+        reject(
+          new Error(
+            typeof error?.message === "string" && error.message
+              ? error.message
+              : "Location access is not available.",
+          ),
+        );
+      },
+      {
+        enableHighAccuracy: false,
+        timeout: 1000,
+        maximumAge: 0,
+      },
+    );
+  });
+}
+
+async function checkGeolocationAccess() {
+  pendingAction = "request-geolocation";
+  errorMessage = null;
+  isCheckingGeolocation = true;
+  render(currentState);
+
+  try {
+    await requestGeolocationPermission();
+  } catch {
+    errorMessage = null;
+    render(currentState);
+  } finally {
+    pendingAction = null;
+    isCheckingGeolocation = false;
+    render(currentState);
+  }
+}
+
+async function ensureAuthenticatedGeolocationCheck(state) {
+  if (state.authStatus !== "authenticated" || pendingAction || isCheckingGeolocation) {
+    return;
+  }
+
+  await checkGeolocationAccess();
+}
+
 function render(state = defaultSessionState) {
   if (!appElement) {
     return;
@@ -50,6 +167,9 @@ function render(state = defaultSessionState) {
   currentState = state;
 
   if (state.authStatus === "authenticated") {
+    const needsLocationSetup =
+      state.permissions?.geolocation !== "granted" && !isCheckingGeolocation;
+
     appElement.innerHTML = `
       <section class="card">
         <span class="badge">Popup</span>
@@ -57,12 +177,27 @@ function render(state = defaultSessionState) {
         <p class="text">You are logged in!</p>
         <p class="note">${getUserLabel(state.user)}</p>
         <p class="note">${getCalendarStatusText(state.calendar)}</p>
+        <p class="note">${getGeolocationStatusText(state.permissions)}</p>
+        ${
+          needsLocationSetup
+            ? `<p class="note">${getGeolocationSetupMessage(state.permissions)}</p>`
+            : ""
+        }
         ${
           errorMessage
             ? `<p class="message message-error">${errorMessage}</p>`
             : ""
         }
         <div class="actions">
+          ${
+            needsLocationSetup
+              ? `<button class="button" data-action="request-geolocation" ${
+                  pendingAction ? "disabled" : ""
+                }>
+                  ${getActionLabel("request-geolocation", state.calendar?.status)}
+                </button>`
+              : ""
+          }
           <button class="button" data-action="connect-calendar" ${
             pendingAction ? "disabled" : ""
           }>
@@ -103,13 +238,20 @@ function render(state = defaultSessionState) {
 
 async function loadState() {
   const response = await chrome.runtime.sendMessage({ type: "GET_SESSION_STATE" });
-  render(response?.sessionState ?? defaultSessionState);
+  const sessionState = response?.sessionState ?? defaultSessionState;
+  render(sessionState);
+  await ensureAuthenticatedGeolocationCheck(sessionState);
 }
 
 async function handleAuthAction(action) {
   pendingAction = action;
   errorMessage = null;
   render(currentState);
+
+  if (action === "request-geolocation") {
+    await checkGeolocationAccess();
+    return;
+  }
 
   const messageTypeMap = {
     "connect-calendar": "CALENDAR_CONNECT_GOOGLE",
@@ -124,7 +266,12 @@ async function handleAuthAction(action) {
       throw new Error(response?.error?.message ?? "Authentication failed.");
     }
 
-    render(response.sessionState ?? currentState);
+    const nextState = response.sessionState ?? currentState;
+    render(nextState);
+
+    if (action === "sign-in") {
+      await ensureAuthenticatedGeolocationCheck(nextState);
+    }
   } catch (error) {
     errorMessage =
       error instanceof Error ? error.message : "Authentication failed.";

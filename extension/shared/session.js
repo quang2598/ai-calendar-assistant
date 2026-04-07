@@ -12,6 +12,10 @@ export const defaultSessionState = {
     status: "disconnected",
     resultCode: null,
   },
+  permissions: {
+    geolocation: "unknown",
+    microphone: "unknown",
+  },
 };
 
 function normalizeUser(value) {
@@ -59,6 +63,21 @@ function normalizeAuth(value) {
   };
 }
 
+function normalizePermissionStatus(value) {
+  return value === "granted" || value === "denied" ? value : "unknown";
+}
+
+function normalizePermissions(value) {
+  if (!value || typeof value !== "object") {
+    return defaultSessionState.permissions;
+  }
+
+  return {
+    geolocation: normalizePermissionStatus(value.geolocation),
+    microphone: normalizePermissionStatus(value.microphone),
+  };
+}
+
 export function normalizeSessionState(value) {
   if (!value || typeof value !== "object") {
     return structuredClone(defaultSessionState);
@@ -70,6 +89,7 @@ export function normalizeSessionState(value) {
     user: normalizeUser(value.user),
     auth: normalizeAuth(value.auth),
     calendar: normalizeCalendar(value.calendar),
+    permissions: normalizePermissions(value.permissions),
   };
 }
 
