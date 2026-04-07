@@ -1,31 +1,67 @@
 import { NextRequest, NextResponse } from "next/server";
 
-const ALLOWED_ORIGIN = "chrome-extension://jgnbhhkoeedfncdgeimnpnimlfnfpfcj";
+const EXTENSION_ORIGINS_ENV = "CHROME_EXTENSION_ORIGINS";
+const EXTENSION_ORIGIN_PATTERN = /^chrome-extension:\/\/[a-p]{32}$/;
+const ALLOWED_METHODS = "GET, POST, OPTIONS";
+const ALLOWED_HEADERS = "Authorization, Content-Type, X-OAuth-Mode, X-Stream";
+const MAX_AGE_SECONDS = "86400";
 
-export function middleware(request: NextRequest) {
+function getConfiguredExtensionOrigins(): Set<string> {
+  const rawValue = process.env[EXTENSION_ORIGINS_ENV] ?? "";
+
+  return new Set(
+    rawValue
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean),
+  );
+}
+
+function isAllowedExtensionOrigin(origin: string | null): origin is string {
+  if (!origin) {
+    return false;
+  }
+
+  const configuredOrigins = getConfiguredExtensionOrigins();
+  if (configuredOrigins.has(origin)) {
+    return true;
+  }
+
+  if (process.env.NODE_ENV !== "production") {
+    return EXTENSION_ORIGIN_PATTERN.test(origin);
+  }
+
+  return false;
+}
+
+function applyCorsHeaders(response: NextResponse, origin: string): NextResponse {
+  response.headers.set("Access-Control-Allow-Origin", origin);
+  response.headers.set("Access-Control-Allow-Methods", ALLOWED_METHODS);
+  response.headers.set("Access-Control-Allow-Headers", ALLOWED_HEADERS);
+  response.headers.set("Access-Control-Max-Age", MAX_AGE_SECONDS);
+  response.headers.set("Vary", "Origin");
+
+  return response;
+}
+
+export function middleware(request: NextRequest): NextResponse {
   const origin = request.headers.get("origin");
+  const isAllowedOrigin = isAllowedExtensionOrigin(origin);
 
-  // Handle CORS preflight
   if (request.method === "OPTIONS") {
-    if (origin === ALLOWED_ORIGIN) {
-      return new NextResponse(null, {
-        status: 204,
-        headers: {
-          "Access-Control-Allow-Origin": ALLOWED_ORIGIN,
-          "Access-Control-Allow-Methods": "POST, OPTIONS",
-          "Access-Control-Allow-Headers": "Content-Type, Authorization",
-          "Access-Control-Max-Age": "86400",
-        },
-      });
+    if (!isAllowedOrigin || !origin) {
+      return new NextResponse(null, { status: 403 });
     }
-    return new NextResponse(null, { status: 403 });
+
+    return applyCorsHeaders(new NextResponse(null, { status: 204 }), origin);
   }
 
-  // Handle actual requests
   const response = NextResponse.next();
-  if (origin === ALLOWED_ORIGIN) {
-    response.headers.set("Access-Control-Allow-Origin", ALLOWED_ORIGIN);
+
+  if (isAllowedOrigin && origin) {
+    applyCorsHeaders(response, origin);
   }
+
   return response;
 }
 

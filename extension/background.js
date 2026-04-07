@@ -1,4 +1,5 @@
 import {
+  APP_ORIGIN,
   FIREBASE_WEB_API_KEY,
   GOOGLE_EXTENSION_CLIENT_ID,
 } from "./shared/config.js";
@@ -179,6 +180,30 @@ async function exchangeGoogleTokenForFirebase({
   };
 }
 
+async function initializeUserProfile({ firebaseIdToken }) {
+  const response = await fetch(`${APP_ORIGIN}/api/extension/auth/profile`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${firebaseIdToken}`,
+    },
+  });
+
+  let payload = null;
+  try {
+    payload = await response.json();
+  } catch {
+    payload = null;
+  }
+
+  if (!response.ok) {
+    const message =
+      typeof payload?.error?.message === "string"
+        ? payload.error.message
+        : "Failed to initialize extension auth profile.";
+    throw new Error(message);
+  }
+}
+
 async function signInWithGoogle() {
   const { firebaseApiKey, googleClientId } = requireExtensionAuthConfig();
   const redirectUrl = chrome.identity.getRedirectURL("google");
@@ -204,6 +229,9 @@ async function signInWithGoogle() {
   const firebaseAuthResult = await exchangeGoogleTokenForFirebase({
     firebaseApiKey,
     googleIdToken: googleAuthResult.googleIdToken,
+  });
+  await initializeUserProfile({
+    firebaseIdToken: firebaseAuthResult.auth.idToken,
   });
 
   const currentState = await readSessionState();
