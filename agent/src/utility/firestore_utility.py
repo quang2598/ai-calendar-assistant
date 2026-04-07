@@ -376,28 +376,6 @@ def update_agent_event_snapshot(
     )
 
 
-@trace_span("delete_agent_created_event_record")
-def delete_agent_created_event_record(uid: str, google_event_id: str) -> None:
-    """
-    Delete the Firestore record of an agent-created event.
-    
-    Args:
-        uid: User ID
-        google_event_id: Google Calendar event ID
-    """
-    cleaned_uid = uid.strip()
-    cleaned_event_id = google_event_id.strip()
-    
-    if not cleaned_uid or not cleaned_event_id:
-        raise ValueError("uid and google_event_id must not be empty")
-    
-    _agent_created_events_collection(cleaned_uid).document(cleaned_event_id).delete()
-    logger.info(
-        "Deleted Firestore record for agent-created event: eventId={}",
-        cleaned_event_id,
-    )
-
-
 # Action History Tracking
 # =======================
 # Firestore schema for action-history subcollection:
@@ -654,3 +632,44 @@ def mark_action_as_rolled_back(uid: str, event_id: str) -> None:
             cleaned_event_id,
         )
 
+
+@trace_span("trigger_frontend_calendar_update")
+def trigger_frontend_calendar_update(
+    uid: str,
+    event_id: str = None,
+    event_start: str = None,
+) -> None:
+    """
+    Update user document to notify frontend that calendar was updated.
+    Frontend listens for changes to the user document and fetches updated events.
+    
+    Args:
+        uid: User ID
+        event_id: Optional event ID that was updated (for debugging)
+        event_start: Optional event start datetime (to jump to event's date)
+    """
+    cleaned_uid = uid.strip()
+    
+    if not cleaned_uid:
+        raise ValueError("uid must not be empty")
+    
+    trigger_timestamp = datetime.now(tz=timezone.utc)
+    
+    # Update the user document with lastCalendarUpdate timestamp and event start date
+    # This triggers the frontend listener on the user document
+    update_data = {
+        "lastCalendarUpdate": trigger_timestamp,
+    }
+    
+    # If event start time is provided, extract the date for frontend to navigate to
+    if event_start:
+        update_data["lastCalendarUpdateEventDate"] = event_start
+    
+    firestore_db.collection("users").document(cleaned_uid).update(update_data)
+    
+    logger.info(
+        "Triggered frontend calendar update: userId={}, eventId={}, eventStart={}",
+        cleaned_uid,
+        event_id or "all",
+        event_start or "unknown",
+    )
