@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import type {
   AsyncStatus,
@@ -60,14 +60,16 @@ export default function ChatPanel({
   const dispatch = useAppDispatch();
   const isCalendarOpen = useAppSelector(selectIsCalendarOpen);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const [expandedCorrectionId, setExpandedCorrectionId] = useState<
+    string | null
+  >(null);
 
-  // Auto-scroll to bottom when messages change, typing indicator, or text reveal updates
+  // Auto-scroll to bottom when messages change or typing indicator appears
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  });
-
+  }, [activeMessages, isAssistantTyping]);
 
   const showMessageList =
     !activeMessagesError &&
@@ -124,13 +126,16 @@ export default function ChatPanel({
         </div>
       </header>
 
-      <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-6 pb-4 sm:px-6">
+      <div
+        ref={scrollRef}
+        className="flex-1 overflow-y-auto px-4 py-6 pb-4 sm:px-6"
+      >
         {!activeConversation && activeMessages.length === 0 ? (
           <section className="mx-auto mt-10 max-w-4xl rounded-2xl border border-slate-800 bg-slate-900/60 p-6 text-center">
-            <h2 className="text-2xl font-semibold tracking-tight text-slate-100">VietCalenAI</h2>
-            <p className="mt-2 text-sm text-slate-400">
-              Hello There!
-            </p>
+            <h2 className="text-2xl font-semibold tracking-tight text-slate-100">
+              VietCalenAI
+            </h2>
+            <p className="mt-2 text-sm text-slate-400">Hello There!</p>
             {isAssistantTyping ? (
               <div className="mx-auto mt-4 flex w-fit items-center gap-2 rounded-full border border-slate-700 bg-slate-900 px-4 py-2 text-xs text-slate-300">
                 <span>VietCalenAI is working on your request...</span>
@@ -190,6 +195,13 @@ export default function ChatPanel({
 
             {activeMessages.map((message) => {
               const isUser = message.role === "user";
+              const isCorrectionExpanded = expandedCorrectionId === message.id;
+              const correctedText = message.correctedText || "";
+              const isCorrectionLong = correctedText.length > 80;
+              const displayedText = isCorrectionExpanded
+                ? correctedText
+                : correctedText.substring(0, 80) +
+                  (isCorrectionLong ? "..." : "");
 
               return (
                 <div
@@ -219,6 +231,38 @@ export default function ChatPanel({
                         </span>
                       )}
                     </p>
+                    {isUser &&
+                      message.correctedText &&
+                      message.correctedText !== message.text && (
+                        <div className="mt-2 text-xs opacity-70 italic text-cyan-300">
+                          <div className="flex items-start gap-2">
+                            <span className="shrink-0">✓ Interpreted as:</span>
+                            <span
+                              className={
+                                !isCorrectionExpanded
+                                  ? "truncate"
+                                  : "whitespace-normal"
+                              }
+                            >
+                              {displayedText}
+                            </span>
+                            {isCorrectionLong && (
+                              <button
+                                onClick={() =>
+                                  setExpandedCorrectionId(
+                                    isCorrectionExpanded ? null : message.id,
+                                  )
+                                }
+                                className="ml-auto shrink-0 underline hover:opacity-100 cursor-pointer transition-opacity"
+                              >
+                                {isCorrectionExpanded
+                                  ? "Show less"
+                                  : "Show more"}
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      )}
                   </div>
                 </div>
               );

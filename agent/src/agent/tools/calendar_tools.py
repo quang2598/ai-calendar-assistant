@@ -17,7 +17,6 @@ from utility.google_calendar_utility import (
     create_user_calendar_event,
     modify_user_calendar_event,
     delete_user_calendar_event,
-    rollback_user_calendar_event,
     get_user_calendar_timezone,
     list_user_calendar_events,
     build_user_google_credentials,
@@ -28,8 +27,8 @@ from utility.firestore_utility import (
     list_agent_created_events,
     update_agent_event_snapshot,
     store_agent_created_event,
-    delete_agent_created_event_record,
     store_action_history,
+    trigger_frontend_calendar_update,
     mark_action_as_rolled_back,
     get_latest_action,
 )
@@ -217,6 +216,25 @@ class GetEventDetailsInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class GetEventIdInput(BaseModel):
+    event_identifier: str = Field(
+        description=(
+            "Event identifier - can be the event title, start time (ISO-8601), location, or event ID. "
+            "For example: 'Team Meeting', '2026-04-05T10:00:00', 'Conference Room B', or 'abc123def456'"
+        ),
+    )
+    timezone: Optional[str] = Field(
+        default=None,
+        description="Optional IANA timezone. Used for searching events by time.",
+    )
+    calendar_id: Optional[str] = Field(
+        default=None,
+        description="Optional calendar id. Defaults to configured calendar.",
+    )
+
+    model_config = ConfigDict(extra="forbid")
+
+
 def _json_tool_response(status: str, message: str, **payload: object) -> str:
     body = {
         "status": status,
@@ -275,25 +293,6 @@ def _normalize_event_creation_datetime(
     
     # If datetime is already naive, return as-is (it represents wall-clock time)
     return value
-
-
-def _format_event_time_for_response(iso_datetime_str: str, timezone_name: Optional[str] = None) -> str:
-    """
-    Convert ISO-8601 datetime string to human-readable format.
-    
-    Args:
-        iso_datetime_str: ISO-8601 formatted datetime string
-        timezone_name: User's timezone (for future use)
-        
-    Returns:
-        Human-readable datetime string
-    """
-    if not iso_datetime_str or not iso_datetime_str.strip():
-        return "(unknown time)"
-    
-    # For now, just return the string as-is to preserve original behavior
-    # The real issue is not formatting but how dates are calculated  
-    return iso_datetime_str
 
 
 def _strip_location_suffix_from_title(title: str, location: Optional[str]) -> str:
@@ -404,16 +403,15 @@ def _extract_location_from_title(title: Optional[str]) -> str:
     return cleaned_title[idx + len(marker):].strip()
 
 
-def _verify_agent_created_event(uid: str, event_id: str) -> bool:
+def _verify_agent_created_event(uid: str, event_id: str):
     """Verify that an event was created by the agent.
     
-    Returns True if the event exists in the event-managed-by-agent collection,
-    False otherwise.
+    Returns the agent_event object if it exists, None otherwise.
     """
     agent_event = get_agent_created_event(uid=uid, google_event_id=event_id)
     found = agent_event is not None
     logger.info("Verify agent created event: event_id={}, found={}", event_id, found)
-    return found
+    return agent_event
 
 
 @trace_span("tool_get_user_calendar")
@@ -644,26 +642,45 @@ def _add_event_to_calendar_with_tracking_impl(
         return result_json
     
     # If creation was successful, store the event record in Firestore
+    logger.info(f"Result status: {result.get('status')}, has event: {'event' in result}")
     if result.get("status") == "success" and "event" in result:
         event_data = result["event"]
         event_id = event_data.get("id", "")
+        logger.info(f"Event created successfully, event_id={event_id}")
         
         if event_id:
             try:
                 # Store the simple event snapshot in Firestore
                 # This keeps the stored data clean and readable
+                logger.info(f"Storing agent-created event in Firestore: event_id={event_id}")
                 store_agent_created_event(
                     uid=uid,
                     google_event_id=event_id,
                     calendar_id=calendar_id or "primary",
                     snapshot=event_data,
                 )
+                logger.info(f"Successfully stored agent-created event")
+                
+                # Trigger frontend to fetch updated events and switch to event's date
+                event_start = event_data.get("start")
+                logger.info(f"Calling trigger_frontend_calendar_update with event_start={event_start}")
+                trigger_frontend_calendar_update(
+                    uid=uid, 
+                    event_id=event_id,
+                    event_start=event_start
+                )
+                logger.info(f"Successfully triggered frontend calendar update")
             except Exception as exc:
                 # Log but don't fail - event was created, just tracking failed
                 import logging
+                logger.exception(f"Failed to store/trigger event in Firestore: {exc}")
                 logging.getLogger(__name__).warning(
                     "Failed to store agent-created event in Firestore: {}", exc
                 )
+        else:
+            logger.warning("Event created but no event_id returned")
+    else:
+        logger.info(f"Event creation failed or incomplete: status={result.get('status')}")
     
     return result_json
 
@@ -690,7 +707,8 @@ def _modify_event_impl(
         )
     
     # Verify event was created by agent
-    if not _verify_agent_created_event(uid=uid, event_id=event_id.strip()):
+    agent_event = _verify_agent_created_event(uid=uid, event_id=event_id.strip())
+    if not agent_event:
         return _json_tool_response(
             status="unauthorized",
             message="I can only manage events that I previously created.",
@@ -708,7 +726,6 @@ def _modify_event_impl(
     
     try:
         # Get current event snapshot before modification (for rollback)
-        agent_event = get_agent_created_event(uid=uid, google_event_id=event_id.strip())
         current_snapshot = agent_event.snapshot if agent_event else {}
         
         # Keep title independent from location updates.
@@ -837,6 +854,19 @@ def _modify_event_impl(
         if old_invitees != modified_event.invitees and not (not old_invitees and not modified_event.invitees):
             changes["attendees"] = (old_invitees, modified_event.invitees)
     
+    # Trigger frontend update for modified event
+    try:
+        event_start = modified_event.start
+        logger.info(f"Calling trigger_frontend_calendar_update for modified event with event_start={event_start}")
+        trigger_frontend_calendar_update(
+            uid=uid,
+            event_id=event_id,
+            event_start=event_start
+        )
+        logger.info(f"Successfully triggered frontend calendar update for modified event")
+    except Exception as exc:
+        logger.exception(f"Failed to trigger frontend update for modified event: {exc}")
+    
     return _json_tool_response(
         status="success",
         message="Calendar event modified successfully.",
@@ -870,7 +900,8 @@ def _delete_event_impl(
         )
     
     # Verify event was created by agent
-    if not _verify_agent_created_event(uid=uid, event_id=event_id.strip()):
+    agent_event = _verify_agent_created_event(uid=uid, event_id=event_id.strip())
+    if not agent_event:
         return _json_tool_response(
             status="unauthorized",
             message="I can only manage events that I previously created.",
@@ -878,7 +909,6 @@ def _delete_event_impl(
     
     try:
         # Get current snapshot before deletion (for rollback)
-        agent_event = get_agent_created_event(uid=uid, google_event_id=event_id.strip())
         current_snapshot = agent_event.snapshot if agent_event else {}
         
         # Perform the deletion
@@ -940,9 +970,23 @@ def _delete_event_impl(
     
     # Include event data in response for @track_action decorator
     event_title = ""
+    event_start = None
     if agent_event and agent_event.snapshot:
         event_title = agent_event.snapshot.get("title", "")
+        event_start = agent_event.snapshot.get("start")
     display_title = event_title or "this event"
+    
+    # Trigger frontend update for deleted event (use event's original date)
+    try:
+        logger.info(f"Calling trigger_frontend_calendar_update for deleted event_id={event_id} with event_start={event_start}")
+        trigger_frontend_calendar_update(
+            uid=uid,
+            event_id=event_id,
+            event_start=event_start
+        )
+        logger.info(f"Successfully triggered frontend calendar update for deleted event")
+    except Exception as exc:
+        logger.exception(f"Failed to trigger frontend update for deleted event: {exc}")
     
     return _json_tool_response(
         status="success",
@@ -959,14 +1003,23 @@ def _rollback_event_impl(
     uid: str,
     event_id: str,
     calendar_id: Optional[str],
+    agent_event=None,
 ) -> str:
     """Rollback (undo) the most recent modification to a calendar event.
     
     This is the pure rollback logic. Call _rollback_event_tool_impl for validation.
     Assumes event_id is already validated and is agent-created.
+    
+    Args:
+        uid: User ID
+        event_id: Event ID to rollback
+        calendar_id: Optional calendar ID
+        agent_event: Optional pre-fetched agent event object to avoid duplicate lookup
     """
     try:
-        agent_event = get_agent_created_event(uid=uid, google_event_id=event_id)
+        # Use provided agent_event or fetch it
+        if agent_event is None:
+            agent_event = get_agent_created_event(uid=uid, google_event_id=event_id)
         event_title = ""
         if agent_event and agent_event.snapshot:
             event_title = str(agent_event.snapshot.get("title", "") or "").strip()
@@ -1029,9 +1082,9 @@ def _rollback_event_impl(
                 if not start_time or not end_time:
                     raise ValueError("Cannot recreate event: start and end times are required")
                 
-                # Call the add event tool implementation to trigger @track_action("add") decorator
+                # Call the tracking wrapper to handle event creation + Firestore storage + frontend notification
                 # Convert datetime objects to ISO-8601 strings for the tool
-                create_response = _add_event_to_calendar_impl(
+                create_response = _add_event_to_calendar_with_tracking_impl(
                     uid=uid,
                     title=previous.get("title", "Restored Event"),
                     start_time=start_time.isoformat(),
@@ -1052,19 +1105,6 @@ def _rollback_event_impl(
                     restored_event_id = restored_event_data.get("id")
                 except json.JSONDecodeError:
                     raise RuntimeError("Invalid response from create operation")
-                
-                # Store the newly created event in agent_created_events
-                # This is critical so that subsequent operations can find and manage this recreated event
-                try:
-                    store_agent_created_event(
-                        uid=uid,
-                        google_event_id=restored_event_id,
-                        calendar_id=calendar_id or "primary",
-                        snapshot=restored_event_data,
-                    )
-                    logger.info(f"Stored recreated event in agent_created_events: new_id={restored_event_id}, original_id={event_id}")
-                except Exception as exc:
-                    logger.warning(f"Failed to store recreated event in agent_created_events: {exc}")
                 
                 # Mark the recovery add action as already rolled back
                 try:
@@ -1150,22 +1190,6 @@ def _rollback_event_impl(
             status="error",
             message=f"Failed to rollback calendar event: {exc}",
         )
-    
-    return _json_tool_response(
-        status="success",
-        message="The event has been rolled back to its previous state.",
-        event={
-            "id": restored_event.event_id,
-            "title": restored_event.title,
-            "start": restored_event.start,
-            "end": restored_event.end,
-            "status": restored_event.status,
-            "location": restored_event.location,
-            "description": restored_event.description,
-            "invitees": restored_event.invitees,
-            "htmlLink": restored_event.html_link,
-        },
-    )
 
 
 @trace_span("tool_rollback_event")
@@ -1180,33 +1204,19 @@ def _rollback_event_tool_impl(uid: str, event_id: str, calendar_id: Optional[str
             message="event_id is required to rollback an event.",
         )
     
-    # List all agent events to identify the event
-    try:
-        agent_events = list_agent_created_events(uid=uid)
-    except Exception as exc:
-        return _json_tool_response(
-            status="error",
-            message=f"Failed to retrieve agent-created events: {exc}",
-        )
-    
-    # Find the event by event_id
-    event_found = None
-    for event in agent_events:
-        if event.google_event_id == event_id.strip():
-            event_found = event
-            break
-
-    event_display_title = "this event"
-    if event_found:
-        snapshot = event_found.snapshot or event_found.previous_snapshot or {}
-        if isinstance(snapshot, dict):
-            event_display_title = str(snapshot.get("title") or "").strip() or "this event"
-    
+    # Verify event was created by agent and get the event object
+    event_found = _verify_agent_created_event(uid=uid, event_id=event_id.strip())
     if not event_found:
         return _json_tool_response(
             status="unauthorized",
             message="I can only rollback events that I previously created.",
         )
+    
+    # Extract display title from event snapshots
+    snapshot = event_found.snapshot or event_found.previous_snapshot or {}
+    event_display_title = "this event"
+    if isinstance(snapshot, dict):
+        event_display_title = str(snapshot.get("title") or "").strip() or "this event"
     
     # Get the latest action to verify this event has the latest action
     try:
@@ -1238,11 +1248,12 @@ def _rollback_event_tool_impl(uid: str, event_id: str, calendar_id: Optional[str
             message=f"This action has already been undone. I cannot undo it again.",
         )
     
-    # Proceed with the rollback
+    # Proceed with the rollback, passing the already-fetched agent_event to avoid duplicate lookup
     return _rollback_event_impl(
         uid=uid,
         event_id=event_id.strip(),
         calendar_id=calendar_id,
+        agent_event=event_found,
     )
 
 
@@ -1413,6 +1424,111 @@ def _get_event_details_impl(
         return _json_tool_response(
             status="error",
             message=f"Failed to get event details: {exc}",
+        )
+
+
+def _get_event_id_impl(
+    uid: str,
+    event_identifier: str,
+    timezone: Optional[str],
+    calendar_id: Optional[str],
+) -> str:
+    """Get the event ID for a specific event from the user's calendar.
+    
+    Searches for an event matching the identifier (title, time, location, or ID)
+    and returns only its event ID.
+    """
+    try:
+        identifier = event_identifier.strip()
+        if not identifier:
+            return _json_tool_response(
+                status="invalid_input",
+                message="Event identifier cannot be empty.",
+            )
+        
+        # Get user's timezone for search
+        timezone_used = (
+            timezone.strip() if timezone and timezone.strip() 
+            else get_user_calendar_timezone(uid=uid, calendar_id=calendar_id)
+        )
+        
+        if timezone_used.lower() == "unknown":
+            return _json_tool_response(
+                status="timezone_required",
+                message="I need to know your timezone before I can search for events. "
+                       "Could you please tell me your timezone? For example: America/New_York, Europe/London, Asia/Tokyo, etc.",
+            )
+        
+        # Get a larger range of events to search from (30 days past and future)
+        now = datetime.now(ZoneInfo(timezone_used))
+        start_dt = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        start_dt = start_dt.replace(month=max(1, start_dt.month - 2))  # 2 months back
+        end_dt = now.replace(day=28, hour=23, minute=59, second=59, microsecond=999999)
+        end_dt = end_dt.replace(month=min(12, end_dt.month + 2))  # 2 months forward
+        
+        # Get all events in the range
+        events = list_user_calendar_events(
+            uid=uid,
+            start_time=start_dt,
+            end_time=end_dt,
+            timezone_name=timezone_used,
+            calendar_id=calendar_id,
+            max_results=250,
+        )
+        
+        # Search for matching event
+        matching_event = None
+        identifier_lower = identifier.lower()
+        
+        for event in events:
+            # Match by exact ID
+            if event.event_id == identifier:
+                matching_event = event
+                break
+            
+            # Match by title (case-insensitive)
+            if event.title and event.title.lower() == identifier_lower:
+                matching_event = event
+                break
+            
+            # Match by partial title
+            if event.title and identifier_lower in event.title.lower():
+                matching_event = event
+                # Don't break - might find exact match
+            
+            # Match by location (case-insensitive)
+            if event.location and event.location.lower() == identifier_lower:
+                matching_event = event
+                break
+            
+            # Match by partial location
+            if event.location and identifier_lower in event.location.lower():
+                matching_event = event
+            
+            # Match by start time
+            if event.start and event.start == identifier:
+                matching_event = event
+                break
+        
+        if not matching_event:
+            return _json_tool_response(
+                status="not_found",
+                message=f"Could not find an event matching '{identifier}' in your calendar.",
+            )
+        
+        # Return only the event ID
+        return _json_tool_response(
+            status="success",
+            message=f"Found event: {matching_event.title}",
+            event_id=matching_event.event_id,
+            title=matching_event.title,
+        )
+    
+    except Exception as exc:
+        logger.exception("Error getting event ID")
+        return _json_tool_response(
+            status="error",
+            message=f"Failed to get event ID: {exc}",
         )
 
 
@@ -1606,7 +1722,7 @@ def build_calendar_tools(uid: str) -> List:
 
     @tool(args_schema=ListAgentEventsInput)
     def list_agent_events() -> str:
-        """List all calendar events that were created by the agent for this user.
+        """List all calendar events that were created by the agent for this user. Call this tool before modifying or deleting events so you can reference event IDs and details.
         
         Returns:
             JSON string with list of agent-created events
@@ -1639,9 +1755,36 @@ def build_calendar_tools(uid: str) -> List:
             calendar_id=calendar_id,
         )
 
+    @tool(args_schema=GetEventIdInput)
+    def get_event_id(
+        event_identifier: str,
+        timezone: Optional[str] = None,
+        calendar_id: Optional[str] = None,
+    ) -> str:
+        """Get the event ID for a specific calendar event.
+        
+        Use this tool to look up an event ID before calling modify_event, delete_event, or rollback_event.
+        Search for an event using any of: event title, location, or start time.
+        
+        Args:
+            event_identifier: Event title, location, or start time in ISO-8601 format
+            timezone: Optional IANA timezone for searching by time
+            calendar_id: Optional calendar id
+            
+        Returns:
+            JSON string with event ID and title
+        """
+        return _get_event_id_impl(
+            uid=cleaned_uid,
+            event_identifier=event_identifier,
+            timezone=timezone,
+            calendar_id=calendar_id,
+        )
+
     return [
         get_user_calendar,
         get_event_details,
+        get_event_id,
         list_agent_events,
         add_event_to_calendar,
         modify_event,

@@ -98,6 +98,10 @@ export function listenToMessages(
           id: doc.id,
           role: toMessageRole(data.role),
           text: typeof data.text === "string" ? data.text : "",
+          correctedText:
+            typeof data.correctedText === "string"
+              ? data.correctedText
+              : undefined,
           createdAtMs: toMillis(data.createdAt),
         } satisfies ConversationMessage;
       });

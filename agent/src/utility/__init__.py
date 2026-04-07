@@ -5,6 +5,7 @@ from .firestore_utility import (
     fetch_user_google_token,
     load_agent_history_messages,
     update_user_google_access_token,
+    trigger_frontend_calendar_update,
 )
 from .google_calendar_utility import (
     CalendarEvent,
@@ -29,6 +30,7 @@ __all__ = [
     "load_agent_history_messages",
     "fetch_user_google_token",
     "update_user_google_access_token",
+    "trigger_frontend_calendar_update",
     "GOOGLE_CALENDAR_SCOPE",
     "CalendarEvent",
     "CreateCalendarEventRequest",

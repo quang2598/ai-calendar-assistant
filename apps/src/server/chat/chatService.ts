@@ -345,13 +345,16 @@ async function applyCorrectedUserMessageIfNeeded(params: {
     isDifferent: normalizedCorrected !== normalizedOriginal,
   });
 
+  // Store the corrected message in a separate field for bookkeeping
+  // Keep the original message intact in the 'text' field
   await firestorePatchDocument({
     idToken,
     path: `users/${encodePathSegment(uid)}/conversations/${encodePathSegment(conversationId)}/messages/${encodePathSegment(userMessageId)}`,
     fields: {
-      text: toFirestoreStringValue(normalizedCorrected),
+      correctedText: toFirestoreStringValue(normalizedCorrected),
+      correctionTimestamp: { timestampValue: new Date().toISOString() },
     },
-    updateMaskFieldPaths: ["text"],
+    updateMaskFieldPaths: ["correctedText", "correctionTimestamp"],
   });
 
   console.log(

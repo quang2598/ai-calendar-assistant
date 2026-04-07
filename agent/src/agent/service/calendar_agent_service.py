@@ -298,6 +298,15 @@ def build_calendar_agent(uid: str, user_timezone: str, user_location: Optional[t
     return agent
 
 
+def _extract_message_content(msg) -> str:
+    """Extract content from a message object or dict."""
+    if isinstance(msg, BaseMessage) and hasattr(msg, 'content'):
+        return str(msg.content or "").strip()
+    elif isinstance(msg, dict) and "content" in msg:
+        return str(msg.get("content", "")).strip()
+    return ""
+
+
 @trace_span("invoke_calendar_agent")
 def invoke_calendar_agent(
     uid: str,
@@ -326,117 +335,58 @@ def invoke_calendar_agent(
     # Build messages list for the create_agent API
     messages = list(chat_history) + [HumanMessage(content=user_message)]
     
-    # create_agent returns a CompiledStateGraph that returns messages list
-    result = agent.invoke(
-        {
-            "messages": messages,
-        }
-    )
+    # create_agent returns a CompiledStateGraph that returns {"messages": [...]}
+    result = agent.invoke({"messages": messages})
 
     logger.info("Agent result: {}", result)
     # extract the last message from the messages list - create_agent returns {"messages": [...]}
     output = ""
     
+    # Try to get messages list from result
     if isinstance(result, dict) and "messages" in result:
         messages_list = result.get("messages", [])
         if isinstance(messages_list, list) and messages_list:
-            # Find the last AIMessage with NON-EMPTY content
-            # Tool-calling agents will have tool calls and tool results, so we need to find 
-            # the final assistant response that actually has content
-            last_ai_msg = None
+            # Find last message with non-empty content (search backwards)
             for msg in reversed(messages_list):
-                if isinstance(msg, AIMessage):
-                    # Check if AIMessage has content
-                    msg_content = str(msg.content or "").strip()
-                    if msg_content:  # Only accept AIMessages with actual content
-                        last_ai_msg = msg
-                        break
-                elif isinstance(msg, dict) and msg.get("type") == "ai":
-                    msg_content = str(msg.get("content", "")).strip()
-                    if msg_content:  # Only accept AI dicts with actual content
-                        last_ai_msg = msg
-                        break
-            
-            if last_ai_msg:
-                if isinstance(last_ai_msg, AIMessage):
-                    output = str(last_ai_msg.content or "").strip()
-                elif isinstance(last_ai_msg, dict) and "content" in last_ai_msg:
-                    output = str(last_ai_msg.get("content", "")).strip()
-                logger.debug("Found last non-empty AIMessage in message history")
-            else:
-                # Fallback: if no non-empty AIMessage found, try to get the first AIMessage
-                # (which often contains the actual response before tool calls)
-                for msg in messages_list:
-                    if isinstance(msg, AIMessage):
-                        msg_content = str(msg.content or "").strip()
-                        if msg_content:
-                            output = msg_content
-                            logger.warning("No non-empty AIMessage at end, using first non-empty AIMessage from history")
-                            break
-                    elif isinstance(msg, dict) and msg.get("type") == "ai":
-                        msg_content = str(msg.get("content", "")).strip()
-                        if msg_content:
-                            output = msg_content
-                            logger.warning("No non-empty AIMessage at end, using first non-empty AI dict from history")
-                            break
-                
-                if not output:
-                    # Last resort: get the last message of any type
-                    last_msg = messages_list[-1]
-                    if isinstance(last_msg, BaseMessage):
-                        output = str(last_msg.content or "").strip()
-                        logger.warning("No non-empty AIMessage found, using last message which is: {}", type(last_msg).__name__)
-                    elif isinstance(last_msg, dict) and "content" in last_msg:
-                        output = str(last_msg.get("content", "")).strip()
-                        logger.warning("No non-empty AIMessage found, using last dict message")
-    elif isinstance(result, BaseMessage):
-        # Fallback if result is directly a BaseMessage
-        output = str(result.content or "").strip()
-    elif isinstance(result, dict):
-        # Fallback to check other common keys
-        output = result.get("output", "")
-        if not output:
-            output = result.get("answer", "")
-        if not output:
-            output = result.get("text", "")
-        output = str(output or "").strip()
-    else:
-        output = str(result or "").strip()
+                content = _extract_message_content(msg)
+                if content:
+                    output = content
+                    break
     
-    # Log detailed info before checking for empty output
-    logger.debug("Extracted output from agent: length={}, type={}", len(output), type(output))
-    if output:
-        logger.debug("First 500 chars of output: {}", output[:500])
-    else:
+    # Fallback: try other common result formats
+    if not output:
+        if isinstance(result, BaseMessage):
+            output = _extract_message_content(result)
+        elif isinstance(result, dict):
+            # Try alternative keys
+            for key in ["output", "answer", "text"]:
+                if key in result:
+                    output = str(result[key] or "").strip()
+                    if output:
+                        break
+        else:
+            output = str(result or "").strip()
+    
+    # Log full output for debugging
+    logger.debug("Extracted output from agent: length={}", len(output))
+    logger.debug("Full agent output:\n{}", output)
+    
+    if not output:
         logger.error("Agent returned empty response. Result type: {}", type(result))
         if isinstance(result, dict):
-            logger.error("Result dict keys: {}", list(result.keys()) if isinstance(result, dict) else "N/A")
-        
-        if 'messages_list' in locals() and messages_list:
-            logger.error("Total messages in list: {}", len(messages_list))
-            for i, msg in enumerate(messages_list):
-                msg_type = type(msg).__name__
-                msg_content = ""
-                if hasattr(msg, 'content'):
-                    msg_content = str(msg.content)[:100] if msg.content else "(empty)"
-                elif isinstance(msg, dict) and 'content' in msg:
-                    msg_content = str(msg.get('content', ''))[:100]
-                logger.error("  Message {}: type={}, content={}", i, msg_type, msg_content)
-        else:
-            logger.error("Messages list: {} (not available in locals)", "N/A")
-        
+            logger.error("Result structure: {}", json.dumps({k: str(v)[:100] for k, v in result.items()}, default=str))
         raise RuntimeError("Agent returned an empty response.")
 
     # Parse the response to extract interpreted question and response
     try:
         parsed = _parse_agent_response(output, fallback_interpreted_question=user_message)
         logger.info("Parsed agent response - interpreted_question: {}, response: {}", 
-                    parsed.interpreted_question[:50],
-                    parsed.response[:50])
+                    parsed.interpreted_question,
+                    parsed.response)
         return parsed
     except ValueError as exc:
         logger.error("Failed to parse agent response: {}", str(exc))
-        logger.error("Agent output was: {}", output[:500] if len(output) > 500 else output)
+        logger.error("Full agent output for failed parse:\n{}", output)
         raise RuntimeError(f"Agent response format error: {str(exc)}")
 
 

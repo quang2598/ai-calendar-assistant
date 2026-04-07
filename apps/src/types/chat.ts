@@ -11,6 +11,7 @@ export type ConversationMessage = {
   id: string;
   role: ChatMessageRole;
   text: string;
+  correctedText?: string; // AI's interpretation of the message (if different from text)
   createdAtMs: number;
 };
 

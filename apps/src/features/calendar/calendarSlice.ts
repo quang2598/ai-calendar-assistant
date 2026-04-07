@@ -1,6 +1,6 @@
 import { createSlice, type PayloadAction } from "@reduxjs/toolkit";
 
-import { getTodayLocalISO } from "@/src/utils/dateUtils";
+import { getTodayLocalISO, dateToLocalISO } from "@/src/utils/dateUtils";
 
 export type CalendarEvent = {
   id: string;
@@ -65,6 +65,15 @@ const calendarSlice = createSlice({
       state.eventsStatus = "failed";
       state.eventsError = action.payload;
     },
+    setCalendarOpenWithDate(state, action: PayloadAction<string>) {
+      // Open calendar and set the selected date to the event's date
+      state.isCalendarOpen = true;
+      state.selectedDate = action.payload;
+      // Update view month/year to match the selected date
+      const date = new Date(`${action.payload}T00:00:00`);
+      state.viewMonth = date.getMonth();
+      state.viewYear = date.getFullYear();
+    },
   },
 });
 
@@ -76,6 +85,7 @@ export const {
   eventsLoading,
   eventsReceived,
   eventsFailed,
+  setCalendarOpenWithDate,
 } = calendarSlice.actions;
 
 export default calendarSlice.reducer;
