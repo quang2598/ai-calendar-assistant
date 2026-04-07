@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { exchangeCodeForGoogleTokens } from "@/src/services/integrations/googleCalendarOAuthService";
+import { extractGoogleAccountId } from "@/src/services/integrations/googleIdTokenService";
 import {
   GoogleTokenRepositoryError,
   persistGoogleCalendarTokens,
@@ -8,27 +9,6 @@ import {
 import { verifyAndDecodeGoogleOAuthState } from "@/src/services/integrations/googleOAuthStateService";
 
 export const runtime = "nodejs";
-
-function extractGoogleAccountId(idToken: string | null): string | null {
-  if (!idToken) {
-    return null;
-  }
-
-  const tokenParts = idToken.split(".");
-  if (tokenParts.length < 2) {
-    return null;
-  }
-
-  try {
-    const payload = JSON.parse(
-      Buffer.from(tokenParts[1] ?? "", "base64url").toString("utf8"),
-    ) as Record<string, unknown>;
-
-    return typeof payload.sub === "string" ? payload.sub : null;
-  } catch {
-    return null;
-  }
-}
 
 function buildAppRedirect(request: NextRequest, status: "success" | "error", code: string): URL {
   const redirectUrl = new URL("/", request.nextUrl.origin);

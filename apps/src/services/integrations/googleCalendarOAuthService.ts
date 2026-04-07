@@ -25,6 +25,12 @@ export type ExchangedGoogleTokens = {
   idToken: string | null;
 };
 
+type GoogleOAuthConfig = {
+  clientId: string;
+  clientSecret: string;
+  redirectUri: string;
+};
+
 function requireEnv(name: string): string {
   const value = process.env[name]?.trim();
   if (!value) {
@@ -34,10 +40,16 @@ function requireEnv(name: string): string {
   return value;
 }
 
-function getGoogleOAuthConfig() {
-  const clientId = requireEnv("GOOGLE_OAUTH_CLIENT_ID");
-  const clientSecret = requireEnv("GOOGLE_OAUTH_CLIENT_SECRET");
-  const redirectUri = requireEnv("GOOGLE_OAUTH_REDIRECT_URI");
+function getGoogleOAuthConfig(
+  envNames: {
+    clientId: string;
+    clientSecret: string;
+    redirectUri: string;
+  },
+): GoogleOAuthConfig {
+  const clientId = requireEnv(envNames.clientId);
+  const clientSecret = requireEnv(envNames.clientSecret);
+  const redirectUri = requireEnv(envNames.redirectUri);
 
   return {
     clientId,
@@ -46,16 +58,31 @@ function getGoogleOAuthConfig() {
   };
 }
 
-export function buildGoogleCalendarConsentUrl(state: string): string {
+function getWebGoogleOAuthConfig(): GoogleOAuthConfig {
+  return getGoogleOAuthConfig({
+    clientId: "GOOGLE_OAUTH_CLIENT_ID",
+    clientSecret: "GOOGLE_OAUTH_CLIENT_SECRET",
+    redirectUri: "GOOGLE_OAUTH_REDIRECT_URI",
+  });
+}
+
+function getExtensionGoogleOAuthConfig(): GoogleOAuthConfig {
+  return getGoogleOAuthConfig({
+    clientId: "GOOGLE_EXTENSION_CALENDAR_CLIENT_ID",
+    clientSecret: "GOOGLE_EXTENSION_CALENDAR_CLIENT_SECRET",
+    redirectUri: "GOOGLE_EXTENSION_CALENDAR_REDIRECT_URI",
+  });
+}
+
+function buildConsentUrl(state: string, config: GoogleOAuthConfig): string {
   if (!state.trim()) {
     throw new Error("OAuth state is required.");
   }
 
-  const { clientId, redirectUri } = getGoogleOAuthConfig();
   const url = new URL(GOOGLE_OAUTH_AUTHORIZE_URL);
 
-  url.searchParams.set("client_id", clientId);
-  url.searchParams.set("redirect_uri", redirectUri);
+  url.searchParams.set("client_id", config.clientId);
+  url.searchParams.set("redirect_uri", config.redirectUri);
   url.searchParams.set("response_type", "code");
   url.searchParams.set("access_type", "offline");
   url.searchParams.set("prompt", "consent");
@@ -65,20 +92,33 @@ export function buildGoogleCalendarConsentUrl(state: string): string {
   return url.toString();
 }
 
-export async function exchangeCodeForGoogleTokens(code: string): Promise<ExchangedGoogleTokens> {
+function buildTokenExchangeBody(code: string, config: GoogleOAuthConfig): URLSearchParams {
   if (!code.trim()) {
     throw new Error("Authorization code is required.");
   }
 
-  const { clientId, clientSecret, redirectUri } = getGoogleOAuthConfig();
-
-  const body = new URLSearchParams({
+  return new URLSearchParams({
     code,
-    client_id: clientId,
-    client_secret: clientSecret,
-    redirect_uri: redirectUri,
+    client_id: config.clientId,
+    client_secret: config.clientSecret,
+    redirect_uri: config.redirectUri,
     grant_type: "authorization_code",
   });
+}
+
+export function buildGoogleCalendarConsentUrl(state: string): string {
+  return buildConsentUrl(state, getWebGoogleOAuthConfig());
+}
+
+export function buildExtensionGoogleCalendarConsentUrl(state: string): string {
+  return buildConsentUrl(state, getExtensionGoogleOAuthConfig());
+}
+
+async function exchangeCodeForGoogleTokensWithConfig(
+  code: string,
+  config: GoogleOAuthConfig,
+): Promise<ExchangedGoogleTokens> {
+  const body = buildTokenExchangeBody(code, config);
 
   const response = await fetch(GOOGLE_OAUTH_TOKEN_URL, {
     method: "POST",
@@ -133,6 +173,16 @@ export async function exchangeCodeForGoogleTokens(code: string): Promise<Exchang
     tokenType: data.token_type,
     idToken: data.id_token ?? null,
   };
+}
+
+export async function exchangeCodeForGoogleTokens(code: string): Promise<ExchangedGoogleTokens> {
+  return exchangeCodeForGoogleTokensWithConfig(code, getWebGoogleOAuthConfig());
+}
+
+export async function exchangeExtensionCodeForGoogleTokens(
+  code: string,
+): Promise<ExchangedGoogleTokens> {
+  return exchangeCodeForGoogleTokensWithConfig(code, getExtensionGoogleOAuthConfig());
 }
 
 export { CALENDAR_EVENTS_SCOPE };

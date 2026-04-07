@@ -69,6 +69,11 @@ function parseRedirectFragment(redirectedTo) {
   return new URLSearchParams(fragment);
 }
 
+function parseRedirectQuery(redirectedTo) {
+  const url = new URL(redirectedTo);
+  return url.searchParams;
+}
+
 function parseJwtPayload(token) {
   const tokenParts = token.split(".");
   if (tokenParts.length < 2) {
@@ -204,6 +209,89 @@ async function initializeUserProfile({ firebaseIdToken }) {
   }
 }
 
+async function fetchExtensionGoogleCalendarConsentUrl({ firebaseIdToken }) {
+  const response = await fetch(`${APP_ORIGIN}/api/extension/google-calendar/connect`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${firebaseIdToken}`,
+    },
+  });
+
+  let payload = null;
+  try {
+    payload = await response.json();
+  } catch {
+    payload = null;
+  }
+
+  if (!response.ok || typeof payload?.url !== "string") {
+    const message =
+      typeof payload?.error?.message === "string"
+        ? payload.error.message
+        : "Failed to start extension Google Calendar OAuth.";
+    throw new Error(message);
+  }
+
+  return payload.url;
+}
+
+function parseGoogleCalendarAuthResult(redirectedTo) {
+  const params = parseRedirectQuery(redirectedTo);
+  const error = params.get("error");
+  if (error) {
+    throw new Error(error);
+  }
+
+  const code = params.get("code")?.trim() ?? "";
+  const state = params.get("state")?.trim() ?? "";
+
+  if (!code || !state) {
+    throw new Error("Google Calendar OAuth did not return code and state.");
+  }
+
+  return { code, state };
+}
+
+async function completeExtensionGoogleCalendarOAuth({
+  firebaseIdToken,
+  code,
+  state,
+}) {
+  const response = await fetch(`${APP_ORIGIN}/api/extension/google-calendar/complete`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${firebaseIdToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      code,
+      state,
+    }),
+  });
+
+  let payload = null;
+  try {
+    payload = await response.json();
+  } catch {
+    payload = null;
+  }
+
+  if (!response.ok) {
+    const message =
+      typeof payload?.error?.message === "string"
+        ? payload.error.message
+        : "Failed to complete extension Google Calendar OAuth.";
+    throw new Error(message);
+  }
+
+  return {
+    resultCode:
+      typeof payload?.result?.code === "string"
+        ? payload.result.code
+        : "CONNECTED",
+  };
+}
+
 async function signInWithGoogle() {
   const { firebaseApiKey, googleClientId } = requireExtensionAuthConfig();
   const redirectUrl = chrome.identity.getRedirectURL("google");
@@ -243,6 +331,60 @@ async function signInWithGoogle() {
   });
 
   return nextState;
+}
+
+async function connectGoogleCalendar() {
+  const currentState = await readSessionState();
+  const firebaseIdToken = currentState.auth.idToken;
+
+  if (currentState.authStatus !== "authenticated" || !firebaseIdToken) {
+    throw new Error("Sign in before connecting Google Calendar.");
+  }
+
+  await writeSessionState({
+    ...currentState,
+    calendar: {
+      ...currentState.calendar,
+      status: "connecting",
+    },
+  });
+
+  try {
+    const consentUrl = await fetchExtensionGoogleCalendarConsentUrl({
+      firebaseIdToken,
+    });
+    const redirectedTo = await chrome.identity.launchWebAuthFlow({
+      url: consentUrl,
+      interactive: true,
+    });
+
+    if (!redirectedTo) {
+      throw new Error("Google Calendar consent did not complete.");
+    }
+
+    const { code, state } = parseGoogleCalendarAuthResult(redirectedTo);
+    const completion = await completeExtensionGoogleCalendarOAuth({
+      firebaseIdToken,
+      code,
+      state,
+    });
+
+    return writeSessionState({
+      ...currentState,
+      calendar: {
+        status: "connected",
+        resultCode: completion.resultCode,
+      },
+    });
+  } catch (error) {
+    await writeSessionState({
+      ...currentState,
+      calendar: {
+        ...currentState.calendar,
+      },
+    });
+    throw error;
+  }
 }
 
 async function signOut() {
@@ -309,6 +451,26 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           ok: false,
           error: {
             message: error instanceof Error ? error.message : "Sign out failed.",
+          },
+        });
+      });
+
+    return true;
+  }
+
+  if (message?.type === "CALENDAR_CONNECT_GOOGLE") {
+    void connectGoogleCalendar()
+      .then((sessionState) => {
+        sendResponse({ ok: true, sessionState });
+      })
+      .catch((error) => {
+        sendResponse({
+          ok: false,
+          error: {
+            message:
+              error instanceof Error
+                ? error.message
+                : "Google Calendar connection failed.",
           },
         });
       });

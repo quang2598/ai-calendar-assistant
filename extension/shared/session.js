@@ -10,6 +10,7 @@ export const defaultSessionState = {
   },
   calendar: {
     status: "disconnected",
+    resultCode: null,
   },
 };
 
@@ -37,6 +38,8 @@ function normalizeCalendar(value) {
       status === "connected" || status === "connecting"
         ? status
         : "disconnected",
+    resultCode:
+      typeof value.resultCode === "string" ? value.resultCode : null,
   };
 }
 
