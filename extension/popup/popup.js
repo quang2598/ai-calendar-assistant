@@ -50,6 +50,30 @@ function getGeolocationSetupMessage(permissions) {
   return "Turning on location would help VietCalenAI personalize the experience better. Check location access to see if it is available.";
 }
 
+function getMicrophoneStatusText(permissions) {
+  const status = permissions?.microphone ?? "unknown";
+
+  if (status === "granted") {
+    return "Microphone access is enabled.";
+  }
+
+  return "Microphone access is not enabled yet.";
+}
+
+function getMicrophoneSetupMessage(permissions) {
+  const status = permissions?.microphone ?? "unknown";
+
+  if (status === "granted") {
+    return "Microphone access is enabled.";
+  }
+
+  if (status === "denied") {
+    return "Turning on microphone would help VietCalenAI support voice interactions better. Check microphone access and try again whenever you're ready.";
+  }
+
+  return "Turning on microphone would help VietCalenAI support voice interactions better. Check microphone access to verify voice input is available.";
+}
+
 function getActionLabel(action, calendarStatus) {
   if (action === "sign-in") {
     return pendingAction === "sign-in" ? "Opening Google..." : "Continue with Google";
@@ -63,6 +87,12 @@ function getActionLabel(action, calendarStatus) {
     return currentState.permissions?.geolocation === "denied"
       ? "Try Location Again"
       : "Check Location Access";
+  }
+
+  if (action === "test-microphone") {
+    return currentState.permissions?.microphone === "denied"
+      ? "Open Microphone Setup"
+      : "Set Up Microphone";
   }
 
   if (action === "sign-out") {
@@ -169,6 +199,7 @@ function render(state = defaultSessionState) {
   if (state.authStatus === "authenticated") {
     const needsLocationSetup =
       state.permissions?.geolocation !== "granted" && !isCheckingGeolocation;
+    const needsMicrophoneSetup = state.permissions?.microphone !== "granted";
 
     appElement.innerHTML = `
       <section class="card">
@@ -178,9 +209,15 @@ function render(state = defaultSessionState) {
         <p class="note">${getUserLabel(state.user)}</p>
         <p class="note">${getCalendarStatusText(state.calendar)}</p>
         <p class="note">${getGeolocationStatusText(state.permissions)}</p>
+        <p class="note">${getMicrophoneStatusText(state.permissions)}</p>
         ${
           needsLocationSetup
             ? `<p class="note">${getGeolocationSetupMessage(state.permissions)}</p>`
+            : ""
+        }
+        ${
+          needsMicrophoneSetup
+            ? `<p class="note">${getMicrophoneSetupMessage(state.permissions)}</p>`
             : ""
         }
         ${
@@ -198,6 +235,11 @@ function render(state = defaultSessionState) {
                 </button>`
               : ""
           }
+          <button class="button button-secondary" data-action="test-microphone" ${
+            pendingAction ? "disabled" : ""
+          }>
+            ${getActionLabel("test-microphone", state.calendar?.status)}
+          </button>
           <button class="button" data-action="connect-calendar" ${
             pendingAction ? "disabled" : ""
           }>
@@ -250,6 +292,22 @@ async function handleAuthAction(action) {
 
   if (action === "request-geolocation") {
     await checkGeolocationAccess();
+    return;
+  }
+
+  if (action === "test-microphone") {
+    try {
+      await chrome.tabs.create({
+        url: chrome.runtime.getURL("request-microphone/index.html"),
+      });
+    } catch {
+      errorMessage = null;
+      render(currentState);
+    } finally {
+      pendingAction = null;
+      render(currentState);
+    }
+
     return;
   }
 
