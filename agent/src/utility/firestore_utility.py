@@ -668,8 +668,7 @@ def trigger_frontend_calendar_update(
     firestore_db.collection("users").document(cleaned_uid).update(update_data)
     
     logger.info(
-        "Triggered frontend calendar update: userId={}, eventId={}, eventStart={}",
-        cleaned_uid,
+        "Triggered frontend calendar update: eventId={}, eventStart={}",
         event_id or "all",
         event_start or "unknown",
     )
