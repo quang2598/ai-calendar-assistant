@@ -99,15 +99,15 @@ def _parse_agent_response(raw_output: str, fallback_interpreted_question: str = 
             except json.JSONDecodeError:
                 logger.warning("Found { } but content is not valid JSON")
     
-    # Fallback 2: If we have plain text, use it as the response
-    # Use the text as-is since the model failed to follow JSON format
-    logger.warning("No valid JSON found in response, using fallback format")
-    logger.warning("Raw output (first 200 chars): {}", text[:200])
+    # Fallback 2: If we got here, the agent failed to return valid JSON
+    # This is an error condition - do NOT use raw text as response
+    logger.error("Agent failed to return valid JSON response")
+    logger.error("Raw output (first 200 chars): {}", text[:200])
     
-    # Use the plain text as the response field, leave interpreted_question empty
+    # Return error response indicating the agent processing failed
     return AgentResponse(
         interpreted_question=(fallback_interpreted_question or "").strip(),
-        response=text[:1000]  # Limit response length to avoid huge outputs
+        response="I encountered a processing error while trying to help you. Please try again."
     )
 
 
@@ -314,6 +314,8 @@ def invoke_calendar_agent(
     user_message: str,
     chat_history: List[BaseMessage],
     user_location: Optional[tuple[float, float]] = None,
+    retry_count: int = 0,
+    max_retries: int = 2,
 ) -> AgentResponse:
     """Invoke the calendar agent to handle user messages.
     
@@ -326,6 +328,8 @@ def invoke_calendar_agent(
         user_message: The user's message
         chat_history: Previous messages in the conversation
         user_location: User's geolocation as (latitude, longitude) tuple
+        retry_count: Current retry attempt (for recursion)
+        max_retries: Maximum number of retries on invalid response
         
     Returns:
         AgentResponse with parsed interpreted_question and response
@@ -338,7 +342,7 @@ def invoke_calendar_agent(
     # create_agent returns a CompiledStateGraph that returns {"messages": [...]}
     result = agent.invoke({"messages": messages})
 
-    logger.info("Agent result: {}", result)
+    # logger.info("Agent result: {}", result)
     # extract the last message from the messages list - create_agent returns {"messages": [...]}
     output = ""
     
@@ -347,7 +351,12 @@ def invoke_calendar_agent(
         messages_list = result.get("messages", [])
         if isinstance(messages_list, list) and messages_list:
             # Find last message with non-empty content (search backwards)
+            # Skip ToolMessage and ToolCall entries - we need AIMessage with actual response
             for msg in reversed(messages_list):
+                # Skip tool messages and incomplete tool calls
+                if isinstance(msg, ToolMessage):
+                    continue
+                
                 content = _extract_message_content(msg)
                 if content:
                     output = content
@@ -370,12 +379,37 @@ def invoke_calendar_agent(
     # Log full output for debugging
     logger.debug("Extracted output from agent: length={}", len(output))
     logger.debug("Full agent output:\n{}", output)
-    
+
+    # Check if response is empty or invalid, retry if needed
     if not output:
         logger.error("Agent returned empty response. Result type: {}", type(result))
         if isinstance(result, dict):
-            logger.error("Result structure: {}", json.dumps({k: str(v)[:100] for k, v in result.items()}, default=str))
-        raise RuntimeError("Agent returned an empty response.")
+            # Log details about messages to understand what happened
+            if "messages" in result and isinstance(result["messages"], list):
+                messages_summary = []
+                for msg in result["messages"]:
+                    if hasattr(msg, '__class__'):
+                        msg_type = msg.__class__.__name__
+                        content = _extract_message_content(msg) if hasattr(msg, 'content') else str(msg)[:50]
+                        messages_summary.append(f"{msg_type}: {content}")
+                logger.error("Message sequence: {}", " -> ".join(messages_summary))
+            else:
+                logger.error("Result structure: {}", json.dumps({k: str(v)[:100] for k, v in result.items()}, default=str))
+        
+        # Retry if we haven't exceeded max retries
+        if retry_count < max_retries:
+            logger.warning("Retrying agent invocation (attempt {}/{})", retry_count + 1, max_retries)
+            return invoke_calendar_agent(
+                uid=uid,
+                user_timezone=user_timezone,
+                user_message=user_message,
+                chat_history=chat_history,
+                user_location=user_location,
+                retry_count=retry_count + 1,
+                max_retries=max_retries,
+            )
+        else:
+            raise RuntimeError("Agent returned an empty response after retries.")
 
     # Parse the response to extract interpreted question and response
     try:
@@ -387,7 +421,21 @@ def invoke_calendar_agent(
     except ValueError as exc:
         logger.error("Failed to parse agent response: {}", str(exc))
         logger.error("Full agent output for failed parse:\n{}", output)
-        raise RuntimeError(f"Agent response format error: {str(exc)}")
+        
+        # Retry if we haven't exceeded max retries
+        if retry_count < max_retries:
+            logger.warning("Retrying agent invocation due to invalid response format (attempt {}/{})", retry_count + 1, max_retries)
+            return invoke_calendar_agent(
+                uid=uid,
+                user_timezone=user_timezone,
+                user_message=user_message,
+                chat_history=chat_history,
+                user_location=user_location,
+                retry_count=retry_count + 1,
+                max_retries=max_retries,
+            )
+        else:
+            raise RuntimeError(f"Agent response format error after retries: {str(exc)}")
 
 
 @trace_span("run_calendar_agent_turn")

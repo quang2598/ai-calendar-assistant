@@ -309,17 +309,23 @@ def _strip_location_suffix_from_title(title: str, location: Optional[str]) -> st
 
 
 def _extract_business_name_from_location(location: Optional[str]) -> str:
-    """Extract likely business name from location text like 'Name, 123 Street, City'."""
+    """Extract likely business name from location text like 'Name, 123 Street, City'.
+    
+    Prefers addresses (starting with numbers) and extracts business name only if present.
+    If location looks like a full address, returns it as-is to preserve full address.
+    """
     cleaned_location = (location or "").strip()
     if not cleaned_location:
         return ""
 
+    # If the location looks like it starts with an address (number + street), 
+    # it's likely a full address like "2729 Shadowview, Eugene" - return as-is
+    if re.match(r"^\d+\s", cleaned_location):
+        return ""  # Don't extract business name from full address
+    
+    # Otherwise extract first segment (likely business name) before comma
     first_segment = cleaned_location.split(",", 1)[0].strip()
     if not first_segment:
-        return ""
-
-    # If first segment looks like a street address, don't treat it as a business name.
-    if re.match(r"^\d+\s", first_segment):
         return ""
 
     return first_segment
@@ -401,6 +407,110 @@ def _extract_location_from_title(title: Optional[str]) -> str:
         return ""
 
     return cleaned_title[idx + len(marker):].strip()
+
+
+def _parse_relative_time_to_iso(time_str: str, timezone_name: str) -> Optional[str]:
+    """Convert relative time expressions like 'Friday', '3pm', 'tomorrow' to ISO format.
+    
+    NOTE: "next week" (without a specific day) is a TIMEFRAME query and should use get_user_calendar.
+    This parser handles specific events using exact weekdays or times.
+    
+    Examples:
+    - "Friday" -> Next occurring Friday (7 days if today is Friday)
+    - "this Friday" -> Same-week Friday
+    - "next Friday" -> Friday of the next week (add 7 days to current week's Friday)
+    - "3pm" -> Today at 15:00
+    - "tomorrow at 2pm" -> Tomorrow at 14:00
+    - "tomorrow" -> Tomorrow at 00:00
+    
+    Args:
+        time_str: Relative time expression (specific day or time, not broad timeframes)
+        timezone_name: User's timezone (e.g., "America/New_York")
+        
+    Returns:
+        ISO format datetime string or None if parsing fails
+    """
+    if not time_str or not time_str.strip():
+        return None
+    
+    try:
+        from datetime import datetime, timedelta
+        from zoneinfo import ZoneInfo
+        
+        time_str_lower = time_str.strip().lower()
+        tz = ZoneInfo(timezone_name)
+        now = datetime.now(tz=tz)
+        
+        # Check if "next" is used (e.g., "next Friday" or "dinner next Tuesday")
+        has_next_prefix = "next " in time_str_lower
+        
+        # Try to parse common relative time patterns
+        weekdays = {
+            "monday": 0, "mon": 0,
+            "tuesday": 1, "tue": 1,
+            "wednesday": 2, "wed": 2,
+            "thursday": 3, "thu": 3,
+            "friday": 4, "fri": 4,
+            "saturday": 5, "sat": 5,
+            "sunday": 6, "sun": 6,
+        }
+        
+        # Handle day-of-week (e.g., "Friday", "next Friday", "this Friday")
+        for day_name, day_num in weekdays.items():
+            if day_name in time_str_lower:
+                current_weekday = now.weekday()
+                days_ahead = (day_num - current_weekday) % 7
+                
+                if has_next_prefix:
+                    # "next Friday" always means 7+ days ahead
+                    if days_ahead == 0:
+                        # Today is Friday and user said "next Friday" -> 7 days
+                        days_ahead = 7
+                    else:
+                        # Add a week to get "next" occurrence
+                        days_ahead += 7
+                else:
+                    # No "next" prefix: if today is that day, they mean next week
+                    if days_ahead == 0:
+                        days_ahead = 7
+                
+                target_date = now + timedelta(days=days_ahead)
+                return target_date.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+        
+        # Handle "today"
+        if "today" in time_str_lower:
+            return now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+        
+        # Handle "tomorrow"
+        if "tomorrow" in time_str_lower:
+            tomorrow = now + timedelta(days=1)
+            return tomorrow.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+        
+        # Handle time expressions like "3pm", "3:30pm", "15:00"
+        import re
+        time_match = re.search(r'(\d{1,2}):?(\d{2})?\s*(am|pm)?', time_str_lower)
+        if time_match:
+            hour = int(time_match.group(1))
+            minute = int(time_match.group(2) or 0)
+            am_pm = time_match.group(3)
+            
+            # Convert to 24-hour format if am/pm specified
+            if am_pm == "pm" and hour != 12:
+                hour += 12
+            elif am_pm == "am" and hour == 12:
+                hour = 0
+            
+            # Check if it's "tomorrow at 3pm" etc
+            target_date = now
+            if "tomorrow" in time_str_lower:
+                target_date = now + timedelta(days=1)
+            
+            return target_date.replace(hour=hour, minute=minute, second=0, microsecond=0).isoformat()
+        
+        return None
+    except Exception as exc:
+        logger.debug("Failed to parse relative time '{}': {}", time_str, exc)
+        return None
 
 
 def _verify_agent_created_event(uid: str, event_id: str):
@@ -728,14 +838,21 @@ def _modify_event_impl(
         # Get current event snapshot before modification (for rollback)
         current_snapshot = agent_event.snapshot if agent_event else {}
         
-        # Keep title independent from location updates.
-        # Only sanitize explicit title updates when location is provided.
-        modified_title = title
-        if modified_title is not None:
-            modified_title = _ensure_business_name_in_title(modified_title, location)
-            modified_title = _capitalize_business_name_in_title(modified_title)
-
+        # Get current title from snapshot if not explicitly provided
+        current_title = current_snapshot.get("title", "") if current_snapshot else ""
+        
+        # Handle title and location updates together
+        # If location is modified, update title to reflect new business name
+        # If title is modified, ensure it has the correct business name format
+        modified_title = title if title is not None else current_title
         modified_location = location.strip() if isinstance(location, str) else None
+        
+        # Apply title/location normalization
+        if modified_title:
+            modified_title = _ensure_business_name_in_title(modified_title, modified_location or (location if location else None))
+            modified_title = _capitalize_business_name_in_title(modified_title)
+        
+        # Handle location extraction from title if needed
         if modified_location is not None and not modified_location:
             modified_location = _extract_location_from_title(modified_title)
             if not modified_location:
@@ -1257,6 +1374,113 @@ def _rollback_event_tool_impl(uid: str, event_id: str, calendar_id: Optional[str
     )
 
 
+def _lookup_event_by_identifier(
+    uid: str,
+    event_identifier: str,
+    timezone: Optional[str],
+    calendar_id: Optional[str],
+) -> Optional[object]:
+    """Helper function to search for an event by identifier.
+    
+    Returns the matching event object, or None if not found or timezone is unknown.
+    Raises exception if timezone is required but unavailable.
+    """
+    identifier = event_identifier.strip()
+    if not identifier:
+        return None
+    
+    # Get user's timezone for search
+    try:
+        timezone_used = (
+            timezone.strip() if timezone and timezone.strip() 
+            else get_user_calendar_timezone(uid=uid, calendar_id=calendar_id)
+        )
+    except Exception:
+        timezone_used = "unknown"
+    
+    if timezone_used.lower() == "unknown":
+        return None
+    
+    try:
+        # Get a larger range of events to search from (2 months past and future)
+        now = datetime.now(ZoneInfo(timezone_used))
+        start_dt = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        start_dt = start_dt.replace(month=max(1, start_dt.month - 2))
+        end_dt = now.replace(day=28, hour=23, minute=59, second=59, microsecond=999999)
+        end_dt = end_dt.replace(month=min(12, end_dt.month + 2))
+        
+        # Get all events in the range
+        events = list_user_calendar_events(
+            uid=uid,
+            start_time=start_dt,
+            end_time=end_dt,
+            timezone_name=timezone_used,
+            calendar_id=calendar_id,
+            max_results=250,
+        )
+        
+        # Search for matching event
+        matching_event = None
+        identifier_lower = identifier.lower()
+        
+        # Try to parse identifier as relative time expression
+        parsed_time_iso = _parse_relative_time_to_iso(identifier, timezone_used)
+        
+        for event in events:
+            # Match by exact ID
+            if event.event_id == identifier:
+                matching_event = event
+                break
+            
+            # Match by title (case-insensitive)
+            if event.title and event.title.lower() == identifier_lower:
+                matching_event = event
+                break
+            
+            # Match by partial title
+            if event.title and identifier_lower in event.title.lower():
+                matching_event = event
+                # Don't break - might find exact match or time match
+            
+            # Match by location (case-insensitive)
+            if event.location and event.location.lower() == identifier_lower:
+                matching_event = event
+                break
+            
+            # Match by partial location
+            if event.location and identifier_lower in event.location.lower():
+                matching_event = event
+            
+            # Match by start time (exact ISO format or relative time parsing)
+            if event.start:
+                # Exact ISO format match
+                if event.start == identifier:
+                    matching_event = event
+                    break
+                
+                # Try matching parsed relative time
+                if parsed_time_iso:
+                    # Extract just date from both for "Friday" type matches
+                    parsed_date = parsed_time_iso.split("T")[0] if "T" in parsed_time_iso else parsed_time_iso
+                    event_date = event.start.split("T")[0] if "T" in event.start else event.start
+                    
+                    # If parsed time has time component (has "T"), match full datetime
+                    if "T" in parsed_time_iso:
+                        # Match with some tolerance (within 1 hour)
+                        if event.start.startswith(parsed_time_iso[:16]):
+                            matching_event = event
+                            break
+                    else:
+                        # Just date match
+                        if event_date == parsed_date:
+                            matching_event = event
+                            break
+        
+        return matching_event
+    except Exception:
+        return None
+
+
 @trace_span("tool_list_agent_events")
 def _list_agent_events_impl(uid: str) -> str:
     """List all events created by the agent."""
@@ -1332,71 +1556,30 @@ def _get_event_details_impl(
                 message="Event identifier cannot be empty.",
             )
         
-        # Get user's timezone for search
-        timezone_used = (
-            timezone.strip() if timezone and timezone.strip() 
-            else get_user_calendar_timezone(uid=uid, calendar_id=calendar_id)
-        )
-        
-        if timezone_used.lower() == "unknown":
-            return _json_tool_response(
-                status="timezone_required",
-                message="I need to know your timezone before I can search for events. "
-                       "Could you please tell me your timezone? For example: America/New_York, Europe/London, Asia/Tokyo, etc.",
-            )
-        
-        # Get a larger range of events to search from (30 days past and future)
-        now = datetime.now(ZoneInfo(timezone_used))
-        start_dt = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-        start_dt = start_dt.replace(month=max(1, start_dt.month - 2))  # 2 months back
-        end_dt = now.replace(day=28, hour=23, minute=59, second=59, microsecond=999999)
-        end_dt = end_dt.replace(month=min(12, end_dt.month + 2))  # 2 months forward
-        
-        # Get all events in the range
-        events = list_user_calendar_events(
+        # Look up the event using the helper function
+        matching_event = _lookup_event_by_identifier(
             uid=uid,
-            start_time=start_dt,
-            end_time=end_dt,
-            timezone_name=timezone_used,
+            event_identifier=event_identifier,
+            timezone=timezone,
             calendar_id=calendar_id,
-            max_results=250,
         )
         
-        # Search for matching event
-        matching_event = None
-        identifier_lower = identifier.lower()
-        
-        for event in events:
-            # Match by exact ID
-            if event.event_id == identifier:
-                matching_event = event
-                break
+        if matching_event is None:
+            # Check if it's a timezone issue
+            try:
+                timezone_used = (
+                    timezone.strip() if timezone and timezone.strip() 
+                    else get_user_calendar_timezone(uid=uid, calendar_id=calendar_id)
+                )
+                if timezone_used.lower() == "unknown":
+                    return _json_tool_response(
+                        status="timezone_required",
+                        message="I need to know your timezone before I can search for events. "
+                               "Could you please tell me your timezone? For example: America/New_York, Europe/London, Asia/Tokyo, etc.",
+                    )
+            except Exception:
+                pass
             
-            # Match by title (case-insensitive)
-            if event.title and event.title.lower() == identifier_lower:
-                matching_event = event
-                break
-            
-            # Match by partial title
-            if event.title and identifier_lower in event.title.lower():
-                matching_event = event
-                # Don't break - might find exact match
-            
-            # Match by location (case-insensitive)
-            if event.location and event.location.lower() == identifier_lower:
-                matching_event = event
-                break
-            
-            # Match by partial location
-            if event.location and identifier_lower in event.location.lower():
-                matching_event = event
-            
-            # Match by start time
-            if event.start and event.start == identifier:
-                matching_event = event
-                break
-        
-        if not matching_event:
             return _json_tool_response(
                 status="not_found",
                 message=f"Could not find an event matching '{identifier}' in your calendar.",
@@ -1446,71 +1629,30 @@ def _get_event_id_impl(
                 message="Event identifier cannot be empty.",
             )
         
-        # Get user's timezone for search
-        timezone_used = (
-            timezone.strip() if timezone and timezone.strip() 
-            else get_user_calendar_timezone(uid=uid, calendar_id=calendar_id)
-        )
-        
-        if timezone_used.lower() == "unknown":
-            return _json_tool_response(
-                status="timezone_required",
-                message="I need to know your timezone before I can search for events. "
-                       "Could you please tell me your timezone? For example: America/New_York, Europe/London, Asia/Tokyo, etc.",
-            )
-        
-        # Get a larger range of events to search from (30 days past and future)
-        now = datetime.now(ZoneInfo(timezone_used))
-        start_dt = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-        start_dt = start_dt.replace(month=max(1, start_dt.month - 2))  # 2 months back
-        end_dt = now.replace(day=28, hour=23, minute=59, second=59, microsecond=999999)
-        end_dt = end_dt.replace(month=min(12, end_dt.month + 2))  # 2 months forward
-        
-        # Get all events in the range
-        events = list_user_calendar_events(
+        # Look up the event using the helper function
+        matching_event = _lookup_event_by_identifier(
             uid=uid,
-            start_time=start_dt,
-            end_time=end_dt,
-            timezone_name=timezone_used,
+            event_identifier=event_identifier,
+            timezone=timezone,
             calendar_id=calendar_id,
-            max_results=250,
         )
         
-        # Search for matching event
-        matching_event = None
-        identifier_lower = identifier.lower()
-        
-        for event in events:
-            # Match by exact ID
-            if event.event_id == identifier:
-                matching_event = event
-                break
+        if matching_event is None:
+            # Check if it's a timezone issue
+            try:
+                timezone_used = (
+                    timezone.strip() if timezone and timezone.strip() 
+                    else get_user_calendar_timezone(uid=uid, calendar_id=calendar_id)
+                )
+                if timezone_used.lower() == "unknown":
+                    return _json_tool_response(
+                        status="timezone_required",
+                        message="I need to know your timezone before I can search for events. "
+                               "Could you please tell me your timezone? For example: America/New_York, Europe/London, Asia/Tokyo, etc.",
+                    )
+            except Exception:
+                pass
             
-            # Match by title (case-insensitive)
-            if event.title and event.title.lower() == identifier_lower:
-                matching_event = event
-                break
-            
-            # Match by partial title
-            if event.title and identifier_lower in event.title.lower():
-                matching_event = event
-                # Don't break - might find exact match
-            
-            # Match by location (case-insensitive)
-            if event.location and event.location.lower() == identifier_lower:
-                matching_event = event
-                break
-            
-            # Match by partial location
-            if event.location and identifier_lower in event.location.lower():
-                matching_event = event
-            
-            # Match by start time
-            if event.start and event.start == identifier:
-                matching_event = event
-                break
-        
-        if not matching_event:
             return _json_tool_response(
                 status="not_found",
                 message=f"Could not find an event matching '{identifier}' in your calendar.",
@@ -1553,10 +1695,19 @@ def build_calendar_tools(uid: str) -> List:
         calendar_id: Optional[str] = None,
         max_results: int = 20,
     ) -> str:
-        """Read events from the user's Google Calendar for a given timeframe.
+        """TIMEFRAME QUERY: Get ALL events within a date/time RANGE.
+        Returns a LIST of multiple events.
         
-        If timeframe is missing, defaults are applied.
-        Use this before answering calendar availability questions.
+        Use ONLY for timeframe questions:
+        - "What do I have next week?"
+        - "Am I free on Friday?"
+        - "Show me my schedule for March"
+        - "What's on my calendar tomorrow?"
+        
+        DO NOT USE for specific event lookups like:
+        - "Tell me more about the dinner on Thursday" -> Use get_event_details
+        - "What are the details of my dentist appointment?" -> Use get_event_details  
+        - "Where is my coffee meeting?" -> Use get_event_details
         
         Args:
             start_time: Optional start datetime in ISO-8601 format
@@ -1566,7 +1717,7 @@ def build_calendar_tools(uid: str) -> List:
             max_results: Maximum number of events to return
             
         Returns:
-            JSON string with calendar events or error message
+            JSON string with list of calendar events
         """
         return _get_user_calendar_impl(
             uid=cleaned_uid,
@@ -1722,7 +1873,7 @@ def build_calendar_tools(uid: str) -> List:
 
     @tool(args_schema=ListAgentEventsInput)
     def list_agent_events() -> str:
-        """List all calendar events that were created by the agent for this user. Call this tool before modifying or deleting events so you can reference event IDs and details.
+        """List all calendar events that were created by the agent for this user.
         
         Returns:
             JSON string with list of agent-created events
@@ -1735,18 +1886,28 @@ def build_calendar_tools(uid: str) -> List:
         timezone: Optional[str] = None,
         calendar_id: Optional[str] = None,
     ) -> str:
-        """Get detailed information about a specific calendar event.
+        """FOR RESPONDING TO USER INQUIRIES: Get detailed info about a specific event.
         
-        Search for an event using any of: event ID, title, location, or start time.
-        The event can be any event on your calendar (not just agent-created ones).
+        Use this tool when the USER ASKS for information about an event.
+        Returns FULL DETAILS of one event (date, time, location, attendees, description, etc).
+        
+        Examples of when to use:
+        - User asks: "Tell me more about the dinner on Thursday"
+        - User asks: "What are the details of my dentist appointment?"
+        - User asks: "Where is my coffee meeting at Starbucks?"
+        - User asks: "What's happening at 3pm?"
+        
+        DO NOT USE for:
+        - Timeframe questions like "What do I have next week?" -> Use get_user_calendar
+        - Getting event ID to modify/delete/rollback -> Use get_event_id
         
         Args:
-            event_identifier: Event ID, title, location, or start time in ISO-8601 format
+            event_identifier: The specific event name (e.g., "dinner", "dentist"), ID, location, or time
             timezone: Optional IANA timezone for searching by time
             calendar_id: Optional calendar id
             
         Returns:
-            JSON string with full event details
+            JSON string with full event details (time, location, attendees, description, etc)
         """
         return _get_event_details_impl(
             uid=cleaned_uid,
@@ -1761,10 +1922,17 @@ def build_calendar_tools(uid: str) -> List:
         timezone: Optional[str] = None,
         calendar_id: Optional[str] = None,
     ) -> str:
-        """Get the event ID for a specific calendar event.
+        """FOR AGENT OPERATIONS: Look up an event ID before calling add/modify/delete/rollback.
         
-        Use this tool to look up an event ID before calling modify_event, delete_event, or rollback_event.
-        Search for an event using any of: event title, location, or start time.
+        Use this tool INTERNALLY to find an event ID that you need for agent operations.
+        Returns only the EVENT ID and TITLE (not full details).
+        
+        When to use:
+        - Before calling modify_event: "I need to find the event ID for 'Dentist' so I can change its time"
+        - Before calling delete_event: "Let me look up the event ID for 'Coffee meeting' before deleting it"
+        - Before calling rollback_event: "I need to find the event ID to undo the change"
+        
+        DO NOT USE to respond to user inquiries -> Use get_event_details for full event info
         
         Args:
             event_identifier: Event title, location, or start time in ISO-8601 format
@@ -1772,7 +1940,7 @@ def build_calendar_tools(uid: str) -> List:
             calendar_id: Optional calendar id
             
         Returns:
-            JSON string with event ID and title
+            JSON string with event ID and title only (not full details)
         """
         return _get_event_id_impl(
             uid=cleaned_uid,
