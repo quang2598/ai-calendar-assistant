@@ -1,0 +1,633 @@
+/* ─── Reset & Base ─── */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: #0f172a;
+  color: #e2e8f0;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.hidden { display: none !important; }
+
+.screen {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+}
+
+/* ─── Auth ─── */
+.auth-container {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 24px;
+  gap: 12px;
+}
+
+.logo { margin-bottom: 8px; }
+
+.app-title {
+  font-size: 22px;
+  font-weight: 700;
+  color: #f1f5f9;
+}
+
+.app-subtitle {
+  font-size: 13px;
+  color: #94a3b8;
+  margin-bottom: 24px;
+}
+
+.btn-google {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 24px;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  background: #1e293b;
+  color: #f1f5f9;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.btn-google:hover {
+  background: #334155;
+  border-color: #475569;
+}
+
+/* ─── Tab Bar ─── */
+.tab-bar {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  padding: 6px 8px;
+  border-bottom: 1px solid #1e293b;
+  background: #0f172a;
+}
+
+.tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: #94a3b8;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.tab:hover {
+  background: #1e293b;
+  color: #e2e8f0;
+}
+
+.tab.active {
+  background: #164e63;
+  color: #22d3ee;
+}
+
+.btn-close {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: #64748b;
+  padding: 6px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.btn-close:hover {
+  background: #1e293b;
+  color: #f87171;
+}
+
+/* ─── Tab Content ─── */
+.tab-content {
+  display: none;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+  flex: 1;
+  overflow-y: auto;
+}
+
+.tab-content.active {
+  display: flex;
+}
+
+/* ─── Cards ─── */
+.card {
+  background: #1e293b;
+  border: 1px solid #334155;
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.card-header {
+  padding: 12px 14px;
+  border-bottom: 1px solid #334155;
+}
+
+.card-header h3 {
+  font-size: 13px;
+  font-weight: 600;
+  color: #94a3b8;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* ─── Calendar ─── */
+.calendar-card {
+  padding: 12px;
+}
+
+.calendar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.calendar-month-label {
+  font-size: 14px;
+  font-weight: 600;
+  color: #f1f5f9;
+}
+
+.btn-cal-nav {
+  background: none;
+  border: none;
+  color: #94a3b8;
+  font-size: 16px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.btn-cal-nav:hover {
+  background: #334155;
+  color: #e2e8f0;
+}
+
+.cal-weekdays {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  text-align: center;
+  margin-bottom: 4px;
+}
+
+.cal-weekdays span {
+  font-size: 11px;
+  font-weight: 600;
+  color: #64748b;
+  padding: 4px;
+}
+
+.cal-days {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+}
+
+.cal-day {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  aspect-ratio: 1;
+  font-size: 12px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: #cbd5e1;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.cal-day:hover {
+  background: #334155;
+}
+
+.cal-day.today {
+  background: #164e63;
+  color: #22d3ee;
+  font-weight: 700;
+}
+
+.cal-day.selected {
+  background: #22d3ee;
+  color: #0f172a;
+  font-weight: 700;
+}
+
+.cal-day.other-month {
+  color: #475569;
+}
+
+.cal-day.has-events::after {
+  content: "";
+  position: absolute;
+  bottom: 2px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: #22d3ee;
+}
+
+.cal-day {
+  position: relative;
+}
+
+/* ─── Events List ─── */
+.events-list {
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.events-list::-webkit-scrollbar {
+  width: 4px;
+}
+
+.events-list::-webkit-scrollbar-thumb {
+  background: #334155;
+  border-radius: 2px;
+}
+
+.event-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #0f172a;
+  border: 1px solid #1e293b;
+  transition: border-color 0.15s;
+}
+
+.event-item:hover {
+  border-color: #334155;
+}
+
+.event-time-bar {
+  width: 3px;
+  min-height: 32px;
+  border-radius: 2px;
+  background: #22d3ee;
+  flex-shrink: 0;
+}
+
+.event-details {
+  flex: 1;
+  min-width: 0;
+}
+
+.event-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: #f1f5f9;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.event-time {
+  font-size: 11px;
+  color: #94a3b8;
+  margin-top: 2px;
+}
+
+/* ─── History List ─── */
+.history-card {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.history-list {
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  overflow-y: auto;
+}
+
+.history-list::-webkit-scrollbar {
+  width: 4px;
+}
+
+.history-list::-webkit-scrollbar-thumb {
+  background: #334155;
+  border-radius: 2px;
+}
+
+.history-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+  transition: background 0.15s;
+}
+
+.history-item:hover {
+  background: #0f172a;
+}
+
+.history-icon {
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: #164e63;
+  color: #22d3ee;
+  flex-shrink: 0;
+}
+
+.history-details {
+  flex: 1;
+  min-width: 0;
+}
+
+.history-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: #f1f5f9;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.history-date {
+  font-size: 11px;
+  color: #64748b;
+  margin-top: 2px;
+}
+
+/* ─── Messages View (drill-down) ─── */
+.messages-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 4px;
+  border-bottom: 1px solid #1e293b;
+  margin-bottom: 8px;
+}
+
+.btn-back {
+  background: none;
+  border: none;
+  color: #22d3ee;
+  padding: 6px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s;
+  display: flex;
+  align-items: center;
+}
+
+.btn-back:hover {
+  background: #1e293b;
+}
+
+.messages-conv-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #f1f5f9;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+}
+
+.messages-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+
+.messages-list::-webkit-scrollbar {
+  width: 4px;
+}
+
+.messages-list::-webkit-scrollbar-thumb {
+  background: #334155;
+  border-radius: 2px;
+}
+
+.msg-bubble {
+  max-width: 85%;
+  padding: 10px 14px;
+  border-radius: 12px;
+  font-size: 13px;
+  line-height: 1.5;
+  word-wrap: break-word;
+}
+
+.msg-bubble.msg-user {
+  align-self: flex-end;
+  background: #164e63;
+  color: #e2e8f0;
+  border-bottom-right-radius: 4px;
+}
+
+.msg-bubble.msg-system {
+  align-self: flex-start;
+  background: #1e293b;
+  color: #e2e8f0;
+  border-bottom-left-radius: 4px;
+}
+
+.msg-time {
+  font-size: 10px;
+  color: #64748b;
+  margin-top: 4px;
+}
+
+.msg-bubble.msg-user .msg-time {
+  text-align: right;
+}
+
+/* ─── Conversation Composer ─── */
+.conv-composer {
+  padding: 8px 0 0;
+  border-top: 1px solid #1e293b;
+  flex-shrink: 0;
+}
+
+.conv-composer-inner {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  background: #1e293b;
+  border: 1px solid #334155;
+  border-radius: 12px;
+  padding: 6px 6px 6px 14px;
+}
+
+.conv-composer-inner textarea {
+  flex: 1;
+  border: none;
+  background: transparent;
+  color: #e2e8f0;
+  font-size: 13px;
+  font-family: inherit;
+  resize: none;
+  outline: none;
+  max-height: 80px;
+  line-height: 1.4;
+  padding: 6px 0;
+}
+
+.conv-composer-inner textarea::placeholder {
+  color: #64748b;
+}
+
+.btn-conv-action {
+  background: none;
+  border: none;
+  color: #64748b;
+  padding: 6px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.btn-conv-action:hover {
+  background: #334155;
+  color: #e2e8f0;
+}
+
+.btn-conv-action.listening {
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.1);
+}
+
+.btn-conv-send {
+  color: #22d3ee;
+}
+
+.btn-conv-send:hover {
+  background: #164e63;
+  color: #22d3ee;
+}
+
+/* Voice overlay in conversation */
+.conv-voice-overlay {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: #1e293b;
+  border: 1px solid #334155;
+  border-radius: 12px;
+  margin-top: 6px;
+}
+
+.conv-voice-bars {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: 1;
+  height: 24px;
+}
+
+.conv-voice-bar {
+  width: 3px;
+  height: 4px;
+  background: #22d3ee;
+  border-radius: 2px;
+  transition: height 0.1s;
+}
+
+.btn-conv-voice-stop {
+  background: #ef4444;
+  border: none;
+  color: white;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.conv-voice-label {
+  font-size: 11px;
+  color: #94a3b8;
+  flex-shrink: 0;
+}
+
+/* Make messages view a flex column to push composer to bottom */
+#history-messages-view {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+#history-messages-view .messages-list {
+  flex: 1;
+  min-height: 0;
+}
+
+/* ─── Typing Indicator ─── */
+.typing-dots span {
+  animation: typingBlink 1.4s infinite both;
+  font-size: 20px;
+  line-height: 1;
+}
+.typing-dots span:nth-child(2) { animation-delay: 0.2s; }
+.typing-dots span:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes typingBlink {
+  0%, 80%, 100% { opacity: 0.2; }
+  40% { opacity: 1; }
+}
+
+/* ─── Empty State ─── */
+.empty-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 16px;
+  color: #64748b;
+  font-size: 13px;
+}
