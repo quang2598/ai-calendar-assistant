@@ -18,8 +18,8 @@ from config.agent_config import agent_settings
 from agent.prompt import build_system_prompt
 from dto import SendChatRequest, SendChatResponse
 from utility import ConversationMessage, get_user_calendar_timezone, load_agent_history_messages
+# from agent.tools import build_calendar_tools, build_location_tools, build_reservation_tools
 from agent.tools import build_calendar_tools, build_location_tools
-
 
 @dataclass
 class AgentResponse:
@@ -49,6 +49,12 @@ def _get_cached_location_tools(
             user_location=user_location,
         )
     )
+
+
+# @lru_cache(maxsize=1)
+# def _get_cached_reservation_tools():
+#     """Cache reservation tools (stateless, single instance)."""
+#     return tuple(build_reservation_tools())
 
 
 def _parse_agent_response(raw_output: str, fallback_interpreted_question: str = "") -> AgentResponse:
@@ -84,7 +90,7 @@ def _parse_agent_response(raw_output: str, fallback_interpreted_question: str = 
     except json.JSONDecodeError:
         logger.warning("Agent response is not valid JSON, attempting fallback extraction")
     
-    # Fallback 1: Try to find JSON object in the text
+    # Fallback 2: Try to find JSON object in the text
     # Look for { ... } pattern
     text = raw_output.strip()
     json_start = text.find('{')
@@ -99,10 +105,18 @@ def _parse_agent_response(raw_output: str, fallback_interpreted_question: str = 
             except json.JSONDecodeError:
                 logger.warning("Found { } but content is not valid JSON")
     
-    # Fallback 2: If we got here, the agent failed to return valid JSON
-    # This is an error condition - do NOT use raw text as response
-    logger.error("Agent failed to return valid JSON response")
-    logger.error("Raw output (first 200 chars): {}", text[:200])
+    # Fallback 3: If we got here, the agent returned plain text instead of JSON
+    # Treat it as a valid response with empty interpreted_question
+    if text:
+        logger.info("Agent returned plain text response (not JSON), using directly")
+        return AgentResponse(
+            interpreted_question="",
+            response=text
+        )
+    
+    # Fallback 4: Empty response - error case
+    logger.warning("Agent failed to return valid JSON response")
+    logger.warning("Raw output (first 200 chars): {}", text[:200])
     
     # Return error response indicating the agent processing failed
     return AgentResponse(
@@ -164,10 +178,6 @@ def _validate_and_extract_response(
     if not isinstance(response, str):
         logger.error("'response' must be a string, got: {}", type(response).__name__)
         raise ValueError("Field 'response' must be a string")
-    
-    logger.debug("Successfully parsed agent JSON response")
-    logger.debug("Interpreted question (first 100 chars): {}", interpreted_question[:100] if interpreted_question else "(empty)")
-    logger.debug("Response (first 100 chars): {}", response[:100])
     
     return AgentResponse(
         interpreted_question=interpreted_question,
@@ -252,7 +262,10 @@ def build_langchain_history_messages(
         converted = _map_role_to_langchain_message(item)
         if converted is not None:
             results.append(converted)
-    return results
+    # for item in results:
+    #     logger.info(item)
+    
+    return list(reversed(results))
 
 
 @trace_span("build_calendar_agent")
@@ -284,8 +297,12 @@ def build_calendar_agent(uid: str, user_timezone: str, user_location: Optional[t
         except ValueError as exc:
             logger.warning("Could not build location tools: {}", exc)
     
+    # # Build reservation tools (cached, stateless)
+    # reservation_tools = list(_get_cached_reservation_tools())
+    
     # Combine all tools
     all_tools = calendar_tools + location_tools
+    # all_tools = calendar_tools + location_tools + reservation_tools
     
     system_prompt = build_system_prompt(user_timezone=user_timezone, user_location=user_location)
     llm = _build_llm()
@@ -307,7 +324,6 @@ def _extract_message_content(msg) -> str:
     return ""
 
 
-@trace_span("invoke_calendar_agent")
 def invoke_calendar_agent(
     uid: str,
     user_timezone: str,
@@ -315,12 +331,18 @@ def invoke_calendar_agent(
     chat_history: List[BaseMessage],
     user_location: Optional[tuple[float, float]] = None,
     retry_count: int = 0,
-    max_retries: int = 2,
+    max_retries: int = 1,  # Retry once on non-timeout errors (empty response, parse errors)
+    agent: Optional[object] = None,
 ) -> AgentResponse:
     """Invoke the calendar agent to handle user messages.
     
     The agent can handle both calendar-related queries and general conversation
     using detailed system prompts for proper behavior.
+    
+    IMPORTANT: 
+    - No timeout - waits as long as needed for agent to complete
+    - Retries ONLY on empty/invalid responses
+    - Concurrent invocations are rejected to prevent race conditions
     
     Args:
         uid: User ID
@@ -328,21 +350,24 @@ def invoke_calendar_agent(
         user_message: The user's message
         chat_history: Previous messages in the conversation
         user_location: User's geolocation as (latitude, longitude) tuple
-        retry_count: Current retry attempt (for recursion)
-        max_retries: Maximum number of retries on invalid response
+        retry_count: Current retry attempt
+        max_retries: Maximum retries on non-timeout failures (default 1)
+        agent: Optional pre-built agent (reused on retries to save time)
         
     Returns:
         AgentResponse with parsed interpreted_question and response
     """
-    agent = build_calendar_agent(uid=uid, user_timezone=user_timezone, user_location=user_location)
+    # Build agent only once on first call
+    if agent is None:
+        agent = build_calendar_agent(uid=uid, user_timezone=user_timezone, user_location=user_location)
     
     # Build messages list for the create_agent API
     messages = list(chat_history) + [HumanMessage(content=user_message)]
     
-    # create_agent returns a CompiledStateGraph that returns {"messages": [...]}
+    # Invoke agent directly - no timeout, just wait for completion
     result = agent.invoke({"messages": messages})
 
-    # logger.info("Agent result: {}", result)
+    logger.info("Agent result: {}", result)
     # extract the last message from the messages list - create_agent returns {"messages": [...]}
     output = ""
     
@@ -350,17 +375,21 @@ def invoke_calendar_agent(
     if isinstance(result, dict) and "messages" in result:
         messages_list = result.get("messages", [])
         if isinstance(messages_list, list) and messages_list:
-            # Find last message with non-empty content (search backwards)
-            # Skip ToolMessage and ToolCall entries - we need AIMessage with actual response
+            # Find LAST AIMessage (most recent agent response), skip tool messages
+            # Go backwards to find the last AIMessage
+            last_ai_message = None
             for msg in reversed(messages_list):
-                # Skip tool messages and incomplete tool calls
-                if isinstance(msg, ToolMessage):
-                    continue
-                
-                content = _extract_message_content(msg)
+                if isinstance(msg, AIMessage):
+                    last_ai_message = msg
+                    break
+            
+            if last_ai_message:
+                content = _extract_message_content(last_ai_message)
                 if content:
                     output = content
-                    break
+                    logger.info("Extracted output from last AIMessage: {} chars", len(output))
+                else:
+                    logger.warning("Last AIMessage has empty content - will trigger retry")
     
     # Fallback: try other common result formats
     if not output:
@@ -376,11 +405,8 @@ def invoke_calendar_agent(
         else:
             output = str(result or "").strip()
     
-    # Log full output for debugging
-    logger.debug("Extracted output from agent: length={}", len(output))
-    logger.debug("Full agent output:\n{}", output)
 
-    # Check if response is empty or invalid, retry if needed
+    # Check if response is empty - retry once on non-timeout failures
     if not output:
         logger.error("Agent returned empty response. Result type: {}", type(result))
         if isinstance(result, dict):
@@ -390,15 +416,17 @@ def invoke_calendar_agent(
                 for msg in result["messages"]:
                     if hasattr(msg, '__class__'):
                         msg_type = msg.__class__.__name__
-                        content = _extract_message_content(msg) if hasattr(msg, 'content') else str(msg)[:50]
-                        messages_summary.append(f"{msg_type}: {content}")
-                logger.error("Message sequence: {}", " -> ".join(messages_summary))
+                        has_content = hasattr(msg, 'content')
+                        msg_content = msg.content if has_content else "N/A"
+                        msg_content_str = str(msg_content)[:100] if msg_content else "(empty)"
+                        messages_summary.append(f"{msg_type}(content={msg_content_str})")
+                logger.error("Full message sequence with content: {}", " -> ".join(messages_summary))
             else:
                 logger.error("Result structure: {}", json.dumps({k: str(v)[:100] for k, v in result.items()}, default=str))
         
-        # Retry if we haven't exceeded max retries
+        # Retry once on empty response (reuse same agent)
         if retry_count < max_retries:
-            logger.warning("Retrying agent invocation (attempt {}/{})", retry_count + 1, max_retries)
+            logger.warning("Agent returned empty response. Retrying (attempt {}/{})", retry_count + 1, max_retries + 1)
             return invoke_calendar_agent(
                 uid=uid,
                 user_timezone=user_timezone,
@@ -407,9 +435,10 @@ def invoke_calendar_agent(
                 user_location=user_location,
                 retry_count=retry_count + 1,
                 max_retries=max_retries,
+                agent=agent,  # Reuse agent to save rebuild time
             )
         else:
-            raise RuntimeError("Agent returned an empty response after retries.")
+            raise RuntimeError("Agent returned an empty response after retry.")
 
     # Parse the response to extract interpreted question and response
     try:
@@ -478,7 +507,12 @@ def run_calendar_agent_turn(payload: SendChatRequest, uid: str) -> SendChatRespo
             user_location=user_location,
         )
     except RuntimeError as exc:
-        if "empty response" in str(exc).lower():
+        error_msg = str(exc).lower()
+        if "timed out" in error_msg:
+            logger.warning("Agent processing timed out for message: {}", payload.message)
+            response_text = "That question was a bit complex for me to process quickly. Could you clarify or ask something more specific?"
+            corrected_message = None
+        elif "empty response" in error_msg:
             logger.warning("Agent returned empty response for message: {}", payload.message)
             response_text = "I'm unable to respond to that question at the moment. Could you please rephrase or ask something else?"
             corrected_message = None
@@ -503,12 +537,12 @@ def run_calendar_agent_turn(payload: SendChatRequest, uid: str) -> SendChatRespo
                     corrected_message[:100]
                 )
             else:
-                logger.debug(
+                logger.info(
                     "No message correction needed (interpreted question matches original): '{}'",
                     original_message[:100]
                 )
         else:
-            logger.debug("No interpreted question provided by agent")
+            logger.info("No interpreted question provided by agent")
     
     logger.info("Agent processing with timezone: {}, user_location: {}", user_timezone, user_location)
     
