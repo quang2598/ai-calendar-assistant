@@ -11,6 +11,7 @@ from agent.service import run_calendar_agent_turn
 from service import FirebaseAuthMiddleware
 from agent.tools.calendar_tools import _rollback_event_impl
 from dto import SendChatRequest, SendChatResponse
+from utility.tracing_utils import trace_span
 
 app = FastAPI()
 
@@ -107,7 +108,9 @@ def _map_runtime_error_to_http(exc: RuntimeError) -> HTTPException:
     )
 
 
+
 @app.post("/agent/send-chat", response_model=SendChatResponse)
+@trace_span("send_chat_endpoint")
 async def send_chat(request: Request, payload: SendChatRequest) -> SendChatResponse:
     # Extract Firebase ID token and verified claims from Firebase auth middleware
     firebase_id_token = getattr(request.state, "firebase_id_token", None)
@@ -129,6 +132,15 @@ async def send_chat(request: Request, payload: SendChatRequest) -> SendChatRespo
     )
     try:
         return run_calendar_agent_turn(payload=payload, uid=uid)
+    except TimeoutError as exc:
+        logger.error("Agent timeout: {}", str(exc))
+        raise HTTPException(
+            status_code=504,
+            detail={
+                "code": "agent_timeout",
+                "message": "The agent took too long to respond. Please try again.",
+            },
+        ) from exc
     except ValueError as exc:
         raise HTTPException(
             status_code=422,

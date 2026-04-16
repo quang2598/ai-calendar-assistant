@@ -1,4 +1,5 @@
 import type { KeyboardEvent } from "react";
+import { useState, useEffect } from "react";
 
 type ChatComposerProps = {
   value: string;
@@ -13,6 +14,7 @@ type ChatComposerProps = {
   onMicToggle?: () => void;
   micVolume?: number;
   micFrequencies?: number[];
+  interimTranscript?: string;
 };
 
 function MicIcon({ className }: { className?: string }) {
@@ -81,8 +83,22 @@ export default function ChatComposer({
   onMicToggle,
   micVolume = 0,
   micFrequencies = [],
+  interimTranscript = "",
 }: ChatComposerProps) {
   const canSend = !disabled && value.trim().length > 0;
+  
+  // Delay the listening UI appearance so users don't start talking too soon
+  const [showListeningUI, setShowListeningUI] = useState(false);
+  
+  useEffect(() => {
+    if (isListening) {
+      // Show listening UI after a brief delay to let speech recognition initialize
+      const timer = setTimeout(() => setShowListeningUI(true), 500);
+      return () => clearTimeout(timer);
+    } else {
+      setShowListeningUI(false);
+    }
+  }, [isListening]);
 
   function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
     if (event.key === "Enter" && !event.shiftKey) {
@@ -93,17 +109,33 @@ export default function ChatComposer({
     }
   }
 
-  const ringScale = isListening ? 1 + micVolume * 0.8 : 1;
-  const ringOpacity = isListening ? 0.3 + micVolume * 0.5 : 0;
+  const ringScale = showListeningUI ? 1 + micVolume * 0.8 : 1;
+  const ringOpacity = showListeningUI ? 0.3 + micVolume * 0.5 : 0;
 
   return (
     <div className="border-t border-slate-800 bg-slate-950/90 p-4 sm:p-5">
       <div className="mx-auto w-full max-w-4xl space-y-2">
         {isListening ? (
           <div className="flex items-center gap-2">
-            <div className="min-h-[60px] flex-1 overflow-hidden rounded-2xl border border-cyan-400/40 bg-slate-900 shadow-[0_0_20px_rgba(34,211,238,0.1)]">
-              <AudioWaveform frequencies={micFrequencies} />
-            </div>
+            {showListeningUI && (
+              <div className="flex-1 overflow-hidden rounded-2xl border border-cyan-400/40 bg-slate-900 shadow-[0_0_20px_rgba(34,211,238,0.1)]">
+                <div className="flex flex-col gap-3 p-4">
+                  <div className="min-h-[60px] flex items-center justify-center">
+                    <AudioWaveform frequencies={micFrequencies} />
+                  </div>
+                  {interimTranscript && (
+                    <div className="text-sm text-cyan-300 italic line-clamp-2">
+                      {interimTranscript}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+            {!showListeningUI && (
+              <div className="flex-1 min-h-[60px] flex items-center justify-center rounded-2xl border border-slate-700 bg-slate-900/50">
+                <p className="text-xs text-slate-400">Initializing...</p>
+              </div>
+            )}
             <div className="relative flex items-center justify-center">
               <span
                 className="absolute rounded-full bg-cyan-400"
@@ -171,8 +203,11 @@ export default function ChatComposer({
           </div>
         )}
 
-        {isListening && (
+        {showListeningUI && (
           <p className="text-center text-xs text-cyan-400">Listening... Speak now</p>
+        )}
+        {!showListeningUI && isListening && (
+          <p className="text-center text-xs text-slate-500">Preparing microphone...</p>
         )}
         {!isListening && errorText ? <p className="text-xs text-red-300">{errorText}</p> : null}
         {!isListening && <p className="text-xs text-slate-500">{helperText}</p>}

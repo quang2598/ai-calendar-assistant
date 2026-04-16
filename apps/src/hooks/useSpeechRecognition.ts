@@ -9,6 +9,7 @@ type UseSpeechRecognitionReturn = {
   isSupported: boolean;
   status: SpeechStatus;
   error: string | null;
+  interimTranscript: string;
   startListening: (onStarted?: () => void) => void;
   stopListening: () => void;
 };
@@ -73,12 +74,13 @@ export function useSpeechRecognition(
 ): UseSpeechRecognitionReturn {
   const [status, setStatus] = useState<SpeechStatus>("idle");
   const [error, setError] = useState<string | null>(null);
+  const [interimTranscript, setInterimTranscript] = useState<string>("");
   const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
   const onTranscriptRef = useRef(onTranscript);
   const wantListeningRef = useRef(false);
   const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const onSilenceTimeoutRef = useRef(options?.onSilenceTimeout);
-  const silenceTimeoutMsRef = useRef(options?.silenceTimeoutMs ?? 1200);
+  const silenceTimeoutMsRef = useRef(options?.silenceTimeoutMs ?? 2000);
 
   useEffect(() => {
     onTranscriptRef.current = onTranscript;
@@ -86,7 +88,7 @@ export function useSpeechRecognition(
 
   useEffect(() => {
     onSilenceTimeoutRef.current = options?.onSilenceTimeout;
-    silenceTimeoutMsRef.current = options?.silenceTimeoutMs ?? 1200;
+    silenceTimeoutMsRef.current = options?.silenceTimeoutMs ?? 2000;
   }, [options?.onSilenceTimeout, options?.silenceTimeoutMs]);
 
   const isSupported = typeof window !== "undefined" && getSpeechRecognitionConstructor() !== null;
@@ -114,12 +116,22 @@ export function useSpeechRecognition(
 
     recognition.onresult = (event: SpeechRecognitionEvent) => {
       let finalTranscript = "";
+      let interim = "";
 
       for (let i = event.resultIndex; i < event.results.length; i++) {
         const result = event.results[i];
+        const transcript = result[0].transcript;
+        
         if (result.isFinal) {
-          finalTranscript += result[0].transcript;
+          finalTranscript += transcript;
+        } else {
+          interim += transcript;
         }
+      }
+
+      // Update interim display in real-time
+      if (interim || finalTranscript) {
+        setInterimTranscript(interim);
       }
 
       if (finalTranscript) {
@@ -215,6 +227,7 @@ export function useSpeechRecognition(
       recognitionRef.current.stop();
       recognitionRef.current = null;
       setStatus("idle");
+      setInterimTranscript("");
     }
   }, []);
 
@@ -237,6 +250,7 @@ export function useSpeechRecognition(
     isSupported,
     status,
     error,
+    interimTranscript,
     startListening,
     stopListening,
   };

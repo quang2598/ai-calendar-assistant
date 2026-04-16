@@ -1,4 +1,5 @@
 import type { AsyncStatus, ConversationSummary } from "@/src/types/chat";
+import Image from "next/image";
 import UserAvatar from "./UserAvatar";
 
 type ChatSidebarProps = {
@@ -40,9 +41,22 @@ export default function ChatSidebar({
 
   return (
     <aside className="hidden w-80 flex-col border-r border-slate-800/90 bg-slate-900/80 p-4 lg:flex">
+      <div className="mb-6 flex justify-center">
+        <Image
+          src="/vietcalenai_branding.png"
+          alt="VietCalenAI Branding"
+          width={120}
+          height={60}
+          priority
+        />
+      </div>
       <div>
-        <p className="text-xs uppercase tracking-[0.2em] text-cyan-300">Conversations</p>
-        <h2 className="mt-2 text-lg font-semibold text-slate-100">Your chats</h2>
+        <p className="text-xs uppercase tracking-[0.2em] text-cyan-300">
+          Conversations
+        </p>
+        <h2 className="mt-2 text-lg font-semibold text-slate-100">
+          Your chats
+        </h2>
         <button
           type="button"
           onClick={onStartNewConversation}
@@ -84,7 +98,9 @@ export default function ChatSidebar({
                 : "border-slate-800 bg-slate-900 hover:border-slate-700 hover:bg-slate-800/70"
             }`}
           >
-            <p className="truncate text-sm font-medium text-slate-100">{conversation.title}</p>
+            <p className="truncate text-sm font-medium text-slate-100">
+              {conversation.title}
+            </p>
           </button>
         ))}
       </div>
@@ -98,7 +114,9 @@ export default function ChatSidebar({
             sizeClassName="h-10 w-10"
           />
           <div className="min-w-0">
-            <p className="truncate text-sm font-medium text-slate-100">{userLabel}</p>
+            <p className="truncate text-sm font-medium text-slate-100">
+              {userLabel}
+            </p>
             {userEmail ? (
               <p className="truncate text-xs text-slate-400">{userEmail}</p>
             ) : null}
@@ -113,7 +131,9 @@ export default function ChatSidebar({
           {isConnectingCalendar ? "Connecting..." : "Connect Google Calendar"}
         </button>
         {calendarConnectionSuccess ? (
-          <p className="mt-2 text-xs text-emerald-300">{calendarConnectionSuccess}</p>
+          <p className="mt-2 text-xs text-emerald-300">
+            {calendarConnectionSuccess}
+          </p>
         ) : null}
         {calendarConnectionError ? (
           <p className="mt-2 text-xs text-red-300">{calendarConnectionError}</p>
