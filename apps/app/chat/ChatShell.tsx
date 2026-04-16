@@ -40,6 +40,7 @@ type ChatShellProps = {
   voiceError?: string | null;
   micVolume?: number;
   micFrequencies?: number[];
+  interimTranscript?: string;
   isSpeaking?: boolean;
   onStopSpeaking?: () => void;
   getVisibleText?: (messageId: string, fullText: string) => string;
@@ -78,6 +79,7 @@ export default function ChatShell({
   voiceError,
   micVolume,
   micFrequencies,
+  interimTranscript,
   isSpeaking,
   onStopSpeaking,
   getVisibleText,
@@ -120,6 +122,7 @@ export default function ChatShell({
           voiceError={voiceError}
           micVolume={micVolume}
           micFrequencies={micFrequencies}
+          interimTranscript={interimTranscript}
           isSpeaking={isSpeaking}
           onStopSpeaking={onStopSpeaking}
           getVisibleText={getVisibleText}

@@ -119,11 +119,12 @@ function HomePageContent() {
     startListening,
     stopListening,
     error: voiceError,
+    interimTranscript,
   } = useSpeechRecognition(handleVoiceTranscript, {
     onSilenceTimeout: useCallback(() => {
       handleSilenceTimeoutRef.current();
     }, []),
-    silenceTimeoutMs: 1200,
+    silenceTimeoutMs: 2000,
   });
 
   const {
@@ -406,6 +407,7 @@ function HomePageContent() {
       voiceError={voiceError}
       micVolume={micVolume}
       micFrequencies={micFrequencies}
+      interimTranscript={interimTranscript}
       isSpeaking={isSpeaking}
       onStopSpeaking={() => {
         stopSpeaking();
