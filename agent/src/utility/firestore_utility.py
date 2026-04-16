@@ -304,22 +304,29 @@ def get_agent_created_event(uid: str, google_event_id: str) -> Optional[AgentCre
 
 
 @trace_span("list_agent_created_events")
-def list_agent_created_events(uid: str) -> List[AgentCreatedEvent]:
+def list_agent_created_events(uid: str, limit: int = 20) -> List[AgentCreatedEvent]:
     """
-    List all events created by the agent for a user.
+    List recently created events for a user.
     
     Args:
         uid: User ID
+        limit: Maximum number of events to return (default 20, returns most recent first)
         
     Returns:
-        List of AgentCreatedEvent records
+        List of AgentCreatedEvent records ordered by creation time (newest first)
     """
     cleaned_uid = uid.strip()
     if not cleaned_uid:
         return []
     
+    query = (
+        _agent_created_events_collection(cleaned_uid)
+        .order_by("createdAt", direction="DESCENDING")
+        .limit(limit)
+    )
+    
     results: List[AgentCreatedEvent] = []
-    for doc in _agent_created_events_collection(cleaned_uid).stream():
+    for doc in query.stream():
         payload = doc.to_dict() or {}
         event = AgentCreatedEvent(
             google_event_id=str(payload.get("googleEventId", "")),

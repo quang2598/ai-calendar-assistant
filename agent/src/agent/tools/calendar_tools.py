@@ -76,15 +76,13 @@ class AddEventToCalendarInput(BaseModel):
     start_time: Optional[str] = Field(
         default=None,
         description=(
-            "Event start datetime in ISO-8601 format, "
-            "for example: 2026-03-12T09:00:00-05:00. Required."
+            "Event start datetime in ISO-8601 format. Required."
         ),
     )
     end_time: Optional[str] = Field(
         default=None,
         description=(
-            "Event end datetime in ISO-8601 format, "
-            "for example: 2026-03-12T10:00:00-05:00. Required."
+            "Event end datetime in ISO-8601 format. Required."
         ),
     )
     timezone: Optional[str] = Field(
@@ -104,15 +102,11 @@ class AddEventToCalendarInput(BaseModel):
         default=None,
         description=(
             "Event location. Put address or business name here. "
-            "Examples: '123 Main Street, Eugene' or 'Asian Market'."
         ),
     )
     invitees: Optional[List[str]] = Field(
         default=None,
-        description=(
-            "Optional list of invitee email addresses, for example: "
-            '["alex@example.com", "sam@example.com"]'
-        ),
+        description="Optional invitee emails.",
     )
     calendar_id: Optional[str] = Field(
         default=None,
@@ -128,7 +122,7 @@ class ModifyEventInput(BaseModel):
     )
     title: Optional[str] = Field(
         default=None,
-        description="New event title (optional).",
+        description="New title (optional).",
     )
     start_time: Optional[str] = Field(
         default=None,
@@ -193,38 +187,75 @@ class RollbackEventInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class CheckAgentEventInput(BaseModel):
+    event_id: str = Field(
+        description="The event ID to check. Verify if this event was created by the agent."
+    )
+    calendar_id: Optional[str] = Field(
+        default=None,
+        description="Optional calendar id. Defaults to configured calendar.",
+    )
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class ListAgentEventsInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
 class GetEventDetailsInput(BaseModel):
-    title: Optional[str] = Field(
+    start_date: Optional[str] = Field(
         default=None,
-        description="Filter by event title (partial match, case-insensitive). Example: 'haircut', 'dinner'",
+        description="Optional start date (YYYY-MM-DD).",
     )
-    date: Optional[str] = Field(
+    start_time: Optional[str] = Field(
         default=None,
-        description="Filter by date (ISO format YYYY-MM-DD). For range search, also provide end_date.",
+        description="Optional start time (HH:MM).",
     )
     end_date: Optional[str] = Field(
         default=None,
-        description="Optional end date (ISO format YYYY-MM-DD) for range search. If provided, searches from date to end_date.",
+        description="Optional end date (YYYY-MM-DD).",
     )
-    time: Optional[str] = Field(
+    end_time: Optional[str] = Field(
         default=None,
-        description="Filter by time (ISO time HH:MM or HH:MM:SS)",
+        description="Optional end time (HH:MM).",
+    )
+    title: Optional[str] = Field(
+        default=None,
+        description="Filter by title (partial match).",
     )
     location: Optional[str] = Field(
         default=None,
-        description="Filter by location (partial match, case-insensitive). Example: 'Starbucks', 'home'",
+        description="Filter by location (partial match).",
     )
     timezone: Optional[str] = Field(
         default=None,
-        description="Optional IANA timezone. Used for searching events by date/time.",
+        description="Optional IANA timezone.",
     )
     calendar_id: Optional[str] = Field(
         default=None,
         description="Optional calendar id. Defaults to configured calendar.",
+    )
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class GetDeletedEventDetailsInput(BaseModel):
+    title: Optional[str] = Field(
+        default=None,
+        description="Filter by title of deleted event (partial match, case-insensitive).",
+    )
+    location: Optional[str] = Field(
+        default=None,
+        description="Filter by location of deleted event (partial match, case-insensitive).",
+    )
+    start_date: Optional[str] = Field(
+        default=None,
+        description="Optional start date (YYYY-MM-DD) to filter deleted events.",
+    )
+    end_date: Optional[str] = Field(
+        default=None,
+        description="Optional end date (YYYY-MM-DD) to filter deleted events.",
     )
 
     model_config = ConfigDict(extra="forbid")
@@ -351,6 +382,10 @@ def _ensure_business_name_in_title(title: str, location: Optional[str]) -> str:
     if not business_name:
         return cleaned_title
 
+    # Check if business name is already in the title (avoid "visit Japanese Garden at Japanese Garden")
+    if business_name.lower() in cleaned_title.lower():
+        return cleaned_title
+
     marker = " at "
     idx = cleaned_title.lower().find(marker)
 
@@ -451,6 +486,17 @@ def _get_user_calendar_impl(
             message="I need to know your timezone before I can access your calendar. "
                    "Could you please tell me your timezone? For example: America/New_York, Europe/London, Asia/Tokyo, etc.",
         )
+
+    # Check timeout before making API call
+    try:
+        from agent.service import _is_agent_timed_out
+        if _is_agent_timed_out():
+            return _json_tool_response(
+                status="agent_timeout",
+                message="Agent operation timed out. Calendar events were not retrieved.",
+            )
+    except ImportError:
+        pass  # Timeout check not available, continue
 
     try:
         events = list_user_calendar_events(
@@ -571,6 +617,17 @@ def _add_event_to_calendar_impl(
             message="I need to know your timezone before I can create calendar events. "
                    "Could you please tell me your timezone? For example: America/New_York, Europe/London, Asia/Tokyo, etc.",
         )
+
+    # Check timeout before making API call
+    try:
+        from agent.service import _is_agent_timed_out
+        if _is_agent_timed_out():
+            return _json_tool_response(
+                status="agent_timeout",
+                message="Agent operation timed out. Calendar event was not created.",
+            )
+    except ImportError:
+        pass  # Timeout check not available, continue
 
     try:
         normalized_start_dt = _normalize_event_creation_datetime(start_dt, timezone_used)
@@ -729,30 +786,53 @@ def _modify_event_impl(
     try:
         # Get current event snapshot before modification (for rollback)
         current_snapshot = agent_event.snapshot if agent_event else {}
-        
-        # Get current title from snapshot if not explicitly provided
         current_title = current_snapshot.get("title", "") if current_snapshot else ""
+        current_location = current_snapshot.get("location", "") if current_snapshot else ""
         
-        # Handle title and location updates together
-        # If location is modified, update title to reflect new business name
-        # If title is modified, ensure it has the correct business name format
-        modified_title = title.strip().capitalize() if title is not None else current_title
-        modified_location = location.strip().capitalize() if isinstance(location, str) else None
+        # logger.info(f"Modify event - current_title='{current_title}', current_location='{current_location}'")
+        # logger.info(f"Modify event - input title='{title}', input location='{location}'")
         
-        # Apply title/location normalization
-        if modified_title:
-            modified_title = _ensure_business_name_in_title(modified_title, modified_location or (location if location else None))
-            modified_title = _capitalize_business_name_in_title(modified_title)
+        # Apply provided updates or keep current values
+        new_title = title.strip().capitalize() if title is not None else current_title
+        new_location = location.strip() if isinstance(location, str) else (current_location if location is None else "")
         
-        # Handle location extraction from title if needed
-        if modified_location is not None and not modified_location:
-            modified_location = _extract_location_from_title(modified_title)
-            if not modified_location:
-                modified_location = None
-        elif modified_location is None and modified_title is not None:
-            derived_location = _extract_location_from_title(modified_title)
-            if derived_location:
-                modified_location = derived_location
+        # logger.info(f"Modify event - new_title before location update='{new_title}', new_location='{new_location}'")
+        
+        # If location changed, update title with new business name
+        if location is not None and isinstance(location, str):
+            new_business_name = _extract_business_name_from_location(new_location)
+            # logger.info(f"Location changed to: {new_location}, extracted business name: '{new_business_name}'")
+            
+            # Extract the current business name from the title (the " at X" part)
+            current_title_business = _extract_location_from_title(new_title)
+            # logger.info(f"Current business name in title: '{current_title_business}'")
+            
+            # If there's a business name in the title and it's different from the new one, replace it
+            if current_title_business and new_business_name and current_title_business.lower() != new_business_name.lower():
+                # Replace the old business name with the new one in the title
+                import re
+                old_pattern = f" at {current_title_business}"
+                new_pattern = f" at {new_business_name}"
+                title_pattern = re.compile(re.escape(old_pattern), re.IGNORECASE)
+                new_title = title_pattern.sub(new_pattern, new_title)
+                # logger.info(f"Replaced '{old_pattern}' → '{new_pattern}' in title")
+            elif new_business_name and not current_title_business:
+                # No business name in current title, add it
+                new_title = _ensure_business_name_in_title(new_title, new_location)
+                # logger.info(f"No business name in title, added via _ensure_business_name_in_title")
+            elif new_business_name:
+                # Ensure new business name is in title
+                new_title = _ensure_business_name_in_title(new_title, new_location)
+                # logger.info(f"Ensured new business name in title via _ensure_business_name_in_title")
+        
+        # Finalize title formatting
+        if new_title:
+            new_title = _capitalize_business_name_in_title(new_title)
+        
+        # logger.info(f"Final modified_title='{new_title}'")
+        
+        modified_title = new_title
+        modified_location = new_location if new_location else None
         
         # IMPORTANT: Fetch the CURRENT event from Google Calendar to get fresh state
         # This ensures we capture what actually changed, not stale stored snapshots
@@ -780,6 +860,17 @@ def _modify_event_impl(
         except Exception as e:
             logger.warning(f"Failed to fetch current Google event for change tracking: {e}")
             current_google_event = None
+        
+        # Check timeout before making API call
+        try:
+            from agent.service import _is_agent_timed_out
+            if _is_agent_timed_out():
+                return _json_tool_response(
+                    status="agent_timeout",
+                    message="Agent operation timed out. Calendar event was not modified.",
+                )
+        except ImportError:
+            pass  # Timeout check not available, continue
         
         # Perform the modification
         modified_event = modify_user_calendar_event(
@@ -920,6 +1011,17 @@ def _delete_event_impl(
         # Get current snapshot before deletion (for rollback)
         current_snapshot = agent_event.snapshot if agent_event else {}
         
+        # Check timeout before making API call
+        try:
+            from agent.service import _is_agent_timed_out
+            if _is_agent_timed_out():
+                return _json_tool_response(
+                    status="agent_timeout",
+                    message="Agent operation timed out. Calendar event was not deleted.",
+                )
+        except ImportError:
+            pass  # Timeout check not available, continue
+        
         # Perform the deletion
         delete_user_calendar_event(
             uid=uid,
@@ -999,7 +1101,7 @@ def _delete_event_impl(
     
     return _json_tool_response(
         status="success",
-        message=f"{display_title} has been deleted successfully. If you change your mind, I can restore it using rollback. Just let me know if you'd like me to bring it back!",
+        message=f"{display_title} has been deleted successfully. No worries—you can restore it anytime by saying 'bring it back' or 'undo that'. Just let me know!",
         event={
             "id": event_id.strip(),
             "title": event_title,
@@ -1269,23 +1371,25 @@ def _rollback_event_tool_impl(uid: str, event_id: str, calendar_id: Optional[str
 def _lookup_events_by_identifier(
     uid: str,
     title: Optional[str],
-    date: Optional[str],
-    time: Optional[str],
+    start_date: Optional[str],
+    start_time: Optional[str],
+    end_date: Optional[str],
+    end_time: Optional[str],
     location: Optional[str],
     timezone: Optional[str],
     calendar_id: Optional[str],
-    end_date: Optional[str] = None,
 ) -> List[object]:
     """Helper function to search for all events matching ALL provided filter criteria.
     
-    Returns events that match ALL specified filters (title AND date AND time AND location).
+    Returns events that match ALL specified filters (title AND location AND timeframe).
     At least one filter must be provided.
     Returns empty list if no matches or timezone is unknown.
     
     Args:
-        date: ISO date string (YYYY-MM-DD). If provided, narrows search to that day (or to end_date if specified).
-        end_date: Optional ISO date string (YYYY-MM-DD) for range searches. If provided, searches from date to end_date.
-        time: ISO time string (HH:MM:SS or HH:MM)
+        start_date: ISO date string (YYYY-MM-DD). Combines with start_time to form start datetime.
+        start_time: ISO time string (HH:MM). Combines with start_date to form start datetime.
+        end_date: ISO date string (YYYY-MM-DD). Combines with end_time to form end datetime.
+        end_time: ISO time string (HH:MM). Combines with end_date to form end datetime.
     """
     # Get user's timezone for search
     try:
@@ -1301,41 +1405,41 @@ def _lookup_events_by_identifier(
     
     try:
         # Validate at least one filter is provided
-        if not any([title, date, time, location]):
+        if not any([title, location, start_date, start_time, end_date, end_time]):
             return []
         
-        # Determine search window based on provided date(s)
+        # Build datetime boundaries by combining date + time fields
         now = datetime.now(ZoneInfo(timezone_used))
         
-        if date:
-            # If date is provided, narrow search to that day (or to end_date if specified)
+        # Construct start_dt from start_date and start_time
+        if start_date:
             try:
-                search_date = datetime.fromisoformat(date).replace(hour=0, minute=0, second=0, microsecond=0)
-                search_date = search_date.replace(tzinfo=ZoneInfo(timezone_used))
-                start_dt = search_date
-                
-                if end_date:
-                    # Range search: from date to end_date
-                    try:
-                        end_search_date = datetime.fromisoformat(end_date).replace(hour=23, minute=59, second=59, microsecond=999999)
-                        end_search_date = end_search_date.replace(tzinfo=ZoneInfo(timezone_used))
-                        end_dt = end_search_date
-                    except (ValueError, TypeError):
-                        # If end_date is invalid, search just the specified date
-                        end_dt = start_dt.replace(hour=23, minute=59, second=59, microsecond=999999)
-                else:
-                    # Single day search: from start to end of that day
-                    end_dt = start_dt.replace(hour=23, minute=59, second=59, microsecond=999999)
-            except (ValueError, TypeError):
-                # Invalid date format, fall back to default range
+                start_dt = datetime.fromisoformat(f"{start_date}T00:00:00").replace(tzinfo=ZoneInfo(timezone_used))
+                if start_time:
+                    # Parse HH:MM format and update the time
+                    time_parts = start_time.split(":")
+                    start_dt = start_dt.replace(hour=int(time_parts[0]), minute=int(time_parts[1]))
+            except (ValueError, TypeError, IndexError):
                 start_dt = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
                 start_dt = start_dt.replace(month=max(1, start_dt.month - 1))
+        else:
+            # No start_date provided, use 1 month before now
+            start_dt = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+            start_dt = start_dt.replace(month=max(1, start_dt.month - 1))
+        
+        # Construct end_dt from end_date and end_time
+        if end_date:
+            try:
+                end_dt = datetime.fromisoformat(f"{end_date}T23:59:59").replace(tzinfo=ZoneInfo(timezone_used))
+                if end_time:
+                    # Parse HH:MM format and update the time
+                    time_parts = end_time.split(":")
+                    end_dt = end_dt.replace(hour=int(time_parts[0]), minute=int(time_parts[1]), second=59)
+            except (ValueError, TypeError, IndexError):
                 end_dt = now.replace(day=28, hour=23, minute=59, second=59, microsecond=999999)
                 end_dt = end_dt.replace(month=min(12, end_dt.month + 1))
         else:
-            # Default: search 1 month past and future
-            start_dt = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-            start_dt = start_dt.replace(month=max(1, start_dt.month - 1))
+            # No end_date provided, use 1 month after now
             end_dt = now.replace(day=28, hour=23, minute=59, second=59, microsecond=999999)
             end_dt = end_dt.replace(month=min(12, end_dt.month + 1))
         
@@ -1352,40 +1456,27 @@ def _lookup_events_by_identifier(
         # Precise filtering: ALL provided filters must match
         matched_events = []
         
-        # Extract date part (ISO format: YYYY-MM-DD)
-        target_date = date.split("T")[0] if date and "T" in date else date
-        
-        # Extract time part (ISO format: HH:MM:SS or HH:MM)
-        target_time_str = None
-        if time:
-            # Get just the HH:MM part
-            target_time_str = time[:5] if len(time) >= 5 else time
-        
         # Filter by all provided criteria (ALL must match)
         for event in events:
-            # Check title filter
+            # Check title filter - match ALL keywords (order-independent)
             if title:
-                if not event.title or title.lower() not in event.title.lower():
+                if not event.title:
+                    continue
+                title_words = title.lower().split()
+                event_title_lower = event.title.lower()
+                if not all(word in event_title_lower for word in title_words):
                     continue
             
-            # Check date filter
-            if target_date:
-                event_date = event.start.split("T")[0] if event.start and "T" in event.start else event.start
-                if event_date != target_date:
-                    continue
-            
-            # Check time filter
-            if target_time_str:
-                event_time = event.start.split("T")[1][:5] if event.start and "T" in event.start else None
-                if not event_time or event_time != target_time_str:
-                    continue
-            
-            # Check location filter
+            # Check location filter - match ALL keywords (order-independent)
             if location:
-                if not event.location or location.lower() not in event.location.lower():
+                if not event.location:
+                    continue
+                location_words = location.lower().split()
+                event_location_lower = event.location.lower()
+                if not all(word in event_location_lower for word in location_words):
                     continue
             
-            # All filters matched
+            # All filters matched, add event once
             matched_events.append(event)
         
         return matched_events
@@ -1394,7 +1485,7 @@ def _lookup_events_by_identifier(
         return []
 
 
-@trace_span("tool_list_agent_events")
+@trace_span("list_agent_events")
 def _list_agent_events_impl(uid: str) -> str:
     """List all events created by the agent."""
     try:
@@ -1452,18 +1543,21 @@ def _list_agent_events_impl(uid: str) -> str:
 @trace_span("tool_get_event_details")
 def _get_event_details_impl(
     uid: str,
-    title: Optional[str],
-    date: Optional[str],
-    time: Optional[str],
-    location: Optional[str],
-    timezone: Optional[str],
-    calendar_id: Optional[str],
+    start_date: Optional[str] = None,
+    start_time: Optional[str] = None,
     end_date: Optional[str] = None,
+    end_time: Optional[str] = None,
+    title: Optional[str] = None,
+    location: Optional[str] = None,
+    timezone: Optional[str] = None,
+    calendar_id: Optional[str] = None,
 ) -> str:
-    """Get details of specific event(s) from the user's calendar using precise filters.
+    """Get events from the user's calendar using filters, timeframe, or both.
     
-    Searches for events matching ALL provided filter criteria (title AND date AND time AND location).
-    At least one filter must be provided.
+    UNIFIED MODE: Accepts any combination of filters (title, location) and/or date/time parameters.
+    - With title/location: Filtered search (returns specific matching events)
+    - With date/time only: Timeframe browse (returns all events in range)  
+    - With both: Filtered search within timeframe (returns matching events in range)
     
     Returns all matching events with their full details (date, time, location, attendees, description, etc),
     which you can then use with modify_event, delete_event, or rollback_event.
@@ -1478,23 +1572,35 @@ def _get_event_details_impl(
     If no events found, ask user to be more specific with additional filters.
     """
     try:
-        # Validate that at least one filter is provided
-        if not any([title, date, time, location]):
+        # Check if any filter is provided (title, location, or date/time)
+        if not any([title, location, start_date, start_time, end_date, end_time]):
             return _json_tool_response(
                 status="invalid_input",
-                message="Please provide at least one filter: title, date, time, or location.",
+                message="Please provide either: 1) start_date/start_time and/or end_date/end_time for timeframe browse, OR 2) at least one filter (title, location) for specific search.",
             )
         
-        # Look up all events matching ALL provided criteria
+        # Check timeout before making API call
+        try:
+            from agent.service import _is_agent_timed_out
+            if _is_agent_timed_out():
+                return _json_tool_response(
+                    status="agent_timeout",
+                    message="Agent operation timed out. Events were not retrieved.",
+                )
+        except ImportError:
+            pass  # Timeout check not available, continue
+        
+        # Look up all events matching provided criteria (handles both filtered and timeframe modes)
         matching_events = _lookup_events_by_identifier(
             uid=uid,
             title=title,
-            date=date,
-            time=time,
+            start_date=start_date,
+            start_time=start_time,
+            end_date=end_date,
+            end_time=end_time,
             location=location,
             timezone=timezone,
             calendar_id=calendar_id,
-            end_date=end_date,
         )
         
         if not matching_events:
@@ -1517,10 +1623,14 @@ def _get_event_details_impl(
             search_parts = []
             if title:
                 search_parts.append(f"title '{title}'")
-            if date:
-                search_parts.append(f"date {date}")
-            if time:
-                search_parts.append(f"time {time}")
+            if start_date:
+                search_parts.append(f"from {start_date}")
+            if start_time:
+                search_parts.append(f"at {start_time}")
+            if end_date:
+                search_parts.append(f"to {end_date}")
+            if end_time:
+                search_parts.append(f"until {end_time}")
             if location:
                 search_parts.append(f"location '{location}'")
             search_desc = " and ".join(search_parts)
@@ -1546,17 +1656,23 @@ def _get_event_details_impl(
             for event in matching_events
         ]
         
-        # Determine message based on number of matches
+        # Determine message based on number of matches and what was searched
         search_criteria = []
         if title:
             search_criteria.append(f"title '{title}'")
-        if date:
-            search_criteria.append(f"date {date}")
-        if time:
-            search_criteria.append(f"time {time}")
         if location:
             search_criteria.append(f"location '{location}'")
-        criteria_str = " and ".join(search_criteria)
+        if start_date or start_time or end_date or end_time:
+            if start_date and end_date:
+                search_criteria.append(f"between {start_date} and {end_date}")
+            elif start_date:
+                search_criteria.append(f"on {start_date}")
+            if start_time and end_time:
+                search_criteria.append(f"from {start_time} to {end_time}")
+            elif start_time:
+                search_criteria.append(f"at {start_time}")
+        
+        criteria_str = " and ".join(search_criteria) if search_criteria else "timeframe"
         
         if len(events_list) == 1:
             message = f"Found event matching {criteria_str}"
@@ -1576,6 +1692,164 @@ def _get_event_details_impl(
             status="error",
             message=f"Failed to get event details: {exc}",
         )
+
+
+@trace_span("tool_get_deleted_event_details")
+def _get_deleted_event_details_impl(
+    uid: str,
+    title: Optional[str] = None,
+    location: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+) -> str:
+    """Get deleted events created by the agent from Firestore.
+    
+    Queries deleted agent-created events stored in Firestore (previous_snapshot).
+    Use this to find deleted events so you can restore them with rollback_event.
+    
+    Args:
+        uid: User ID
+        title: Filter by deleted event title (partial match, case-insensitive)
+        location: Filter by deleted event location (partial match, case-insensitive)
+        start_date: Filter events deleted on or after this date (YYYY-MM-DD)
+        end_date: Filter events deleted on or before this date (YYYY-MM-DD)
+    
+    Returns: JSON with deleted events or empty list
+    """
+    try:
+        # Get all agent-created events from Firestore
+        agent_events = list_agent_created_events(uid=uid)
+        
+        # Filter for deleted events only
+        deleted_events = [e for e in agent_events if e.status == "deleted"]
+        
+        if not deleted_events:
+            return _json_tool_response(
+                status="success",
+                message="No deleted events found.",
+                events=[],
+                event_count=0,
+            )
+        
+        # Apply filters to deleted events
+        matched_events = []
+        
+        for event in deleted_events:
+            # Use previous_snapshot for deleted events (current snapshot is None)
+            snapshot = event.previous_snapshot or {}
+            
+            if not snapshot:
+                logger.warning(f"Deleted event {event.google_event_id} has no previous_snapshot")
+                continue
+            
+            event_title = snapshot.get("title", "")
+            event_location = snapshot.get("location", "")
+            event_start = snapshot.get("start", "")
+            
+            # Check title filter - match ALL keywords (order-independent)
+            if title:
+                title_words = title.lower().split()
+                event_title_lower = (event_title or "").lower()
+                if not all(word in event_title_lower for word in title_words):
+                    continue
+            
+            # Check location filter - match ALL keywords (order-independent)
+            if location:
+                location_words = location.lower().split()
+                event_location_lower = (event_location or "").lower()
+                if not all(word in event_location_lower for word in location_words):
+                    continue
+            
+            # Check date filters using event start time
+            if start_date or end_date:
+                event_date = None
+                if event_start:
+                    try:
+                        # Extract date from ISO datetime string (YYYY-MM-DD part)
+                        event_date = event_start.split("T")[0]
+                    except (ValueError, IndexError):
+                        pass
+                
+                if start_date and event_date and event_date < start_date:
+                    continue
+                if end_date and event_date and event_date > end_date:
+                    continue
+            
+            # All filters matched, add event
+            matched_events.append(event)
+        
+        if not matched_events:
+            search_parts = []
+            if title:
+                search_parts.append(f"title '{title}'")
+            if location:
+                search_parts.append(f"location '{location}'")
+            if start_date or end_date:
+                if start_date and end_date:
+                    search_parts.append(f"between {start_date} and {end_date}")
+                elif start_date:
+                    search_parts.append(f"from {start_date}")
+                elif end_date:
+                    search_parts.append(f"until {end_date}")
+            search_desc = " and ".join(search_parts) if search_parts else "criteria"
+            
+            return _json_tool_response(
+                status="not_found",
+                message=f"No deleted events found matching {search_desc}.",
+                events=[],
+                event_count=0,
+            )
+        
+        # Format matched events
+        events_list = []
+        for event in matched_events:
+            snapshot = event.previous_snapshot or {}
+            events_list.append({
+                "id": event.google_event_id,
+                "title": snapshot.get("title", "(untitled)"),
+                "start": snapshot.get("start", ""),
+                "end": snapshot.get("end", ""),
+                "location": snapshot.get("location", "") or "",
+                "description": snapshot.get("description", "") or "",
+                "deleted_at": event.last_modified_at.isoformat() if event.last_modified_at else "",
+                "can_restore": True,
+            })
+        
+        # Determine message
+        search_criteria = []
+        if title:
+            search_criteria.append(f"title '{title}'")
+        if location:
+            search_criteria.append(f"location '{location}'")
+        if start_date or end_date:
+            if start_date and end_date:
+                search_criteria.append(f"between {start_date} and {end_date}")
+            elif start_date:
+                search_criteria.append(f"from {start_date}")
+            elif end_date:
+                search_criteria.append(f"until {end_date}")
+        
+        criteria_str = " and ".join(search_criteria) if search_criteria else "all deleted events"
+        
+        if len(events_list) == 1:
+            message = f"Found 1 deleted event matching {criteria_str}"
+        else:
+            message = f"Found {len(events_list)} deleted events matching {criteria_str}"
+        
+        return _json_tool_response(
+            status="success",
+            message=message,
+            events=events_list,
+            event_count=len(events_list),
+        )
+    
+    except Exception as exc:
+        logger.exception("Error getting deleted event details")
+        return _json_tool_response(
+            status="error",
+            message=f"Failed to get deleted event details: {exc}",
+        )
+
 
 def build_calendar_tools(uid: str) -> List:
     """Build calendar tools for a given user.
@@ -1598,29 +1872,16 @@ def build_calendar_tools(uid: str) -> List:
         calendar_id: Optional[str] = None,
         max_results: int = 20,
     ) -> str:
-        """TIMEFRAME QUERY: Get ALL events within a date/time RANGE.
-        Returns a LIST of multiple events.
-        
-        Use ONLY for timeframe questions:
-        - "What do I have next week?"
-        - "Am I free on Friday?"
-        - "Show me my schedule for March"
-        - "What's on my calendar tomorrow?"
-        
-        DO NOT USE for specific event lookups like:
-        - "Tell me more about the dinner on Thursday" -> Use get_event_details
-        - "What are the details of my dentist appointment?" -> Use get_event_details  
-        - "Where is my coffee meeting?" -> Use get_event_details
+        """Get events in a date/time range.
         
         Args:
-            start_time: Optional start datetime in ISO-8601 format
-            end_time: Optional end datetime in ISO-8601 format
+            start_time: Start datetime (ISO-8601)
+            end_time: End datetime (ISO-8601)
             timezone: Optional IANA timezone
             calendar_id: Optional calendar id
-            max_results: Maximum number of events to return
-            
-        Returns:
-            JSON string with list of calendar events
+            max_results: Max events (default 20)
+        
+        Returns: JSON with event list
         """
         return _get_user_calendar_impl(
             uid=cleaned_uid,
@@ -1642,15 +1903,7 @@ def build_calendar_tools(uid: str) -> List:
         invitees: Optional[List[str]] = None,
         calendar_id: Optional[str] = None,
     ) -> str:
-        """Create a Google Calendar event for the user.
-        
-        Requires title, start_time, and end_time.
-        Optional fields include description, location, invitees, and timezone.
-        IMPORTANT: Put venue/address/business name in `location`, not `description`.
-        Use `description` for notes only.
-        If required fields are missing, the tool returns missing_fields.
-        
-        After successful creation, the event is automatically tracked by the agent.
+        """Create calendar event. Requires: title, start_time, end_time.
         
         Args:
             title: Event title (required)
@@ -1689,13 +1942,7 @@ def build_calendar_tools(uid: str) -> List:
         invitees: Optional[List[str]] = None,
         calendar_id: Optional[str] = None,
     ) -> str:
-        """Modify an existing calendar event created by the agent.
-        
-        CRITICAL: This tool can ONLY modify events that the agent previously created.
-        Attempting to modify pre-existing or user-created events will be rejected.
-        
-        At least one field (other than event_id) must be provided to modify.
-        IMPORTANT: Put venue/address/business name updates in `location`, not `description`.
+        """Modify an agent-created event (only agent-created events).
         
         Args:
             event_id: The event ID to modify (required, must be agent-created)
@@ -1729,12 +1976,7 @@ def build_calendar_tools(uid: str) -> List:
         event_id: str,
         calendar_id: Optional[str] = None,
     ) -> str:
-        """Delete a calendar event created by the agent.
-        
-        CRITICAL: This tool can ONLY delete events that the agent previously created.
-        Attempting to delete pre-existing or user-created events will be rejected.
-        
-        Deleted events can be restored using the rollback_event tool.
+        """Delete an agent-created event (can restore with rollback).
         
         Args:
             event_id: The event ID to delete (required, must be agent-created)
@@ -1754,19 +1996,13 @@ def build_calendar_tools(uid: str) -> List:
         event_id: str,
         calendar_id: Optional[str] = None,
     ) -> str:
-        """Undo the most recent action on a specific calendar event created by the agent.
-        
-        This tool allows you to undo the latest change to a specific event. It:
-        1. Verifies the event was created by the agent
-        2. Checks if it's the latest action for that event
-        3. Rolls back the event to its previous state
+        """Undo the most recent action on an agent-created event.
         
         Args:
-            event_id: The ID of the event to rollback (must be agent-created)
+            event_id: Event ID to rollback (must be agent-created)
             calendar_id: Optional calendar id
-            
-        Returns:
-            JSON string with success/error message
+        
+        Returns: JSON with success/error
         """
         return _rollback_event_tool_impl(
             uid=cleaned_uid,
@@ -1774,78 +2010,126 @@ def build_calendar_tools(uid: str) -> List:
             calendar_id=calendar_id,
         )
 
+    @tool(args_schema=CheckAgentEventInput)
+    def check_agent_event(event_id: str, calendar_id: Optional[str] = None) -> str:
+        """Check if an event was created by the agent (for debugging/confirmation).
+        
+        Use this tool only when you need to verify if the agent created a specific event.
+        CRUD operations (modify, delete, rollback) already check this internally.
+        
+        Args:
+            event_id: The event ID to verify
+            calendar_id: Optional calendar id. Defaults to configured calendar.
+        
+        Returns: JSON confirming if event is agent-created with its details
+        """
+        agent_event = _verify_agent_created_event(uid=cleaned_uid, event_id=event_id)
+        
+        if not agent_event:
+            return _json_tool_response(
+                status="not_found",
+                message=f"Event {event_id} was NOT created by the agent.",
+                is_agent_created=False,
+            )
+        
+        # Get event details from snapshot
+        snapshot = agent_event.snapshot or agent_event.previous_snapshot or {}
+        display_status = "active" if agent_event.snapshot else ("deleted" if agent_event.status == "deleted" else agent_event.status)
+        
+        return _json_tool_response(
+            status="success",
+            message=f"Event {event_id} WAS created by the agent.",
+            is_agent_created=True,
+            event={
+                "id": agent_event.google_event_id,
+                "title": snapshot.get("title", "(untitled)"),
+                "start": snapshot.get("start", ""),
+                "end": snapshot.get("end", ""),
+                "calendar": agent_event.calendar_id,
+                "status": display_status,
+                "created_at": agent_event.created_at.isoformat() if agent_event.created_at else "",
+            },
+        )
+
     @tool(args_schema=ListAgentEventsInput)
     def list_agent_events() -> str:
-        """List all calendar events that were created by the agent for this user.
+        """List all calendar events created by the agent.
         
-        Returns:
-            JSON string with list of agent-created events
+        Returns: JSON with event list
         """
         return _list_agent_events_impl(uid=cleaned_uid)
 
     @tool(args_schema=GetEventDetailsInput)
     def get_event_details(
-        title: Optional[str] = None,
-        date: Optional[str] = None,
+        start_date: Optional[str] = None,
+        start_time: Optional[str] = None,
         end_date: Optional[str] = None,
-        time: Optional[str] = None,
+        end_time: Optional[str] = None,
+        title: Optional[str] = None,
         location: Optional[str] = None,
         timezone: Optional[str] = None,
         calendar_id: Optional[str] = None,
     ) -> str:
-        """Get detailed info about specific event(s) using precise filters.
-        
-        PRECISE FILTERING ONLY - Provide at least one filter to search for events.
-        LLM will convert relative time expressions ("tomorrow", "Friday 3pm") to ISO format.
+        """Search/browse calendar by timeframe and/or filters.
         
         Args:
-            title: Filter by event title (partial match, case-insensitive)
-                   Example: "haircut", "dinner", "meeting"
-            date: Filter by date in ISO format YYYY-MM-DD
-                  Example: "2026-04-11"
-            end_date: Optional end date in ISO format YYYY-MM-DD for range search
-                      Example: "2026-04-18" (to search from date to end_date)
-            time: Filter by time in ISO format HH:MM or HH:MM:SS
-                  Example: "15:00", "19:30"
+            start_date: Start date (YYYY-MM-DD)
+            start_time: Start time (HH:MM)
+            end_date: End date (YYYY-MM-DD)
+            end_time: End time (HH:MM)
+            title: Filter by title (partial match, case-insensitive)
             location: Filter by location (partial match, case-insensitive)
-                      Example: "Starbucks", "home", "coffee shop"
             timezone: Optional IANA timezone
             calendar_id: Optional calendar id
         
-        USAGE EXAMPLES:
-        - Find haircut on Friday: title="haircut" date="2026-04-17"
-        - Find dinner at 7pm: title="dinner" time="19:00"
-        - Find events at Starbucks: location="Starbucks"
-        - Find meetings tomorrow morning: title="meeting" date="2026-04-11" time="09:00"
-        - Find events between dates: title="meeting" date="2026-04-10" end_date="2026-04-20"
-        
-        IMPORTANT: If multiple events are found and the user wants to modify/delete/rollback them,
-        list the events and ask which one they want to proceed with. Example:
-        "I found 2 events matching title 'dinner' and date '2026-04-18':
-        1. Dinner with Sarah (7pm at home)
-        2. Dinner at Italian Place (6:30pm)
-        Which one would you like to modify?"
-        
-        If no events found, ask user to be more specific or try different filters.
-        
-        Returns:
-            JSON string with full event details including ID. Returns "events" array (may have 1+ items)
+        Returns: JSON with matching events or empty list
         """
         return _get_event_details_impl(
             uid=cleaned_uid,
+            start_date=start_date,
+            start_time=start_time,
+            end_date=end_date,
+            end_time=end_time,
             title=title,
-            date=date,
-            time=time,
             location=location,
             timezone=timezone,
             calendar_id=calendar_id,
+        )
+
+    @tool(args_schema=GetDeletedEventDetailsInput)
+    def get_deleted_event_details(
+        title: Optional[str] = None,
+        location: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> str:
+        """Search deleted events created by the agent (for restoration).
+        
+        Queries Firestore for deleted agent-created events. Use this to find and identify
+        which deleted event to restore with rollback_event.
+        
+        Args:
+            title: Filter by deleted event title (partial match, case-insensitive)
+            location: Filter by deleted event location (partial match, case-insensitive)
+            start_date: Filter events deleted on or after this date (YYYY-MM-DD)
+            end_date: Filter events deleted on or before this date (YYYY-MM-DD)
+        
+        Returns: JSON with deleted events matching filters or empty list
+        """
+        return _get_deleted_event_details_impl(
+            uid=cleaned_uid,
+            title=title,
+            location=location,
+            start_date=start_date,
             end_date=end_date,
         )
 
     return [
-        get_user_calendar,
-        get_event_details,
+        # get_user_calendar,  # DEPRECATED: Use get_event_details with start_time/end_time instead
         # list_agent_events,
+        check_agent_event,
+        get_event_details,
+        get_deleted_event_details,
         add_event_to_calendar,
         modify_event,
         delete_event,

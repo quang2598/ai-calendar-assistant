@@ -58,6 +58,8 @@ const chatSlice = createSlice({
       state.sendingStatus = "idle";
       state.sendingError = null;
       state.isAssistantTyping = false;
+      // Clear pending messages when starting a new conversation
+      state.messagesByConversationId["__pending__"] = [];
     },
     setComposerText(state, action: PayloadAction<string>) {
       state.composerText = action.payload;

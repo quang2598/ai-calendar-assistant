@@ -11,291 +11,6 @@ from pydantic import BaseModel, ConfigDict, Field
 from utility.tracing_utils import trace_span
 
 
-# Mapping of user-friendly service names to Google Places API types
-SERVICE_TYPE_MAPPING = {
-    # Accommodation
-    "hotel": "lodging",
-    "lodging": "lodging",
-    "motel": "lodging",
-    "bed and breakfast": "lodging",
-    "bed & breakfast": "lodging",
-    "inn": "lodging",
-    "hostel": "lodging",
-    "resort": "lodging",
-    "apartment": "lodging",
-    
-    # Food & Beverage
-    "restaurant": "restaurant",
-    "cafe": "cafe",
-    "coffee shop": "cafe",
-    "coffee": "cafe",
-    "coffee house": "cafe",
-    "bakery": "bakery",
-    "bakery shop": "bakery",
-    "bar": "bar",
-    "pub": "bar",
-    "nightclub": "night_club",
-    "nightlife": "night_club",
-    "club": "night_club",
-    "liquor store": "liquor_store",
-    "alcohol": "liquor_store",
-    "wine bar": "bar",
-    
-    # Beauty & Personal Care
-    "barbershop": "hair_care",
-    "barber": "hair_care",
-    "hair salon": "hair_care",
-    "hair care": "hair_care",
-    "salon": "hair_care",
-    "beauty salon": "beauty_salon",
-    "beauty shop": "beauty_salon",
-    "spa": "spa",
-    "massage": "spa",
-    "nail salon": "nail_salon",
-    "nail care": "nail_salon",
-    "nails": "nail_salon",
-    "manicure": "nail_salon",
-    "pedicure": "nail_salon",
-    "tanning": "beauty_salon",
-    "waxing": "beauty_salon",
-    
-    # Health & Medical
-    "hospital": "hospital",
-    "clinic": "doctor",
-    "medical clinic": "doctor",
-    "dentist": "dentist",
-    "dental": "dentist",
-    "dental office": "dentist",
-    "doctor": "doctor",
-    "doctor's office": "doctor",
-    "physician": "doctor",
-    "general practice": "doctor",
-    "veterinary": "veterinary_care",
-    "vet": "veterinary_care",
-    "pet hospital": "veterinary_care",
-    "animal hospital": "veterinary_care",
-    "pharmacy": "pharmacy",
-    "drug store": "pharmacy",
-    "drugstore": "pharmacy",
-    "optometrist": "doctor",
-    "eye care": "doctor",
-    "orthodontist": "doctor",
-    "pediatrician": "doctor",
-    "chiropractor": "doctor",
-    "physical therapy": "doctor",
-    
-    # Fitness & Recreation
-    "gym": "gym",
-    "fitness center": "gym",
-    "fitness": "gym",
-    "health club": "gym",
-    "yoga": "gym",
-    "yoga studio": "gym",
-    "pilates": "gym",
-    "gym studio": "gym",
-    "swimming pool": "swimming_pool",
-    "pool": "swimming_pool",
-    "bowling": "bowling_alley",
-    "bowling alley": "bowling_alley",
-    "amusement park": "amusement_park",
-    "park": "park",
-    "playground": "park",
-    "sports complex": "sports_complex",
-    "stadium": "stadium",
-    "sports facility": "sports_complex",
-    
-    # Shopping
-    "grocery store": "grocery_or_supermarket",
-    "grocery": "grocery_or_supermarket",
-    "supermarket": "grocery_or_supermarket",
-    "market": "grocery_or_supermarket",
-    "convenience store": "convenience_store",
-    "convenience": "convenience_store",
-    "shopping center": "shopping_mall",
-    "shopping mall": "shopping_mall",
-    "mall": "shopping_mall",
-    "department store": "department_store",
-    "clothing store": "clothing_store",
-    "clothes": "clothing_store",
-    "shoe store": "shoe_store",
-    "shoes": "shoe_store",
-    "electronics": "electronics_store",
-    "electronics store": "electronics_store",
-    "bookstore": "book_store",
-    "books": "book_store",
-    "library": "library",
-    "gift shop": "shopping_mall",
-    "jewelry store": "jewelry_store",
-    "jewelry": "jewelry_store",
-    "furniture store": "furniture_store",
-    "furniture": "furniture_store",
-    "hardware store": "hardware_store",
-    "hardware": "hardware_store",
-    "pet store": "pet_store",
-    "pets": "pet_store",
-    "toy store": "toy_store",
-    "toys": "toy_store",
-    
-    # Automotive
-    "gas station": "gas_station",
-    "gas": "gas_station",
-    "petrol station": "gas_station",
-    "fuel": "gas_station",
-    "car repair": "car_repair",
-    "mechanic": "car_repair",
-    "auto repair": "car_repair",
-    "garage": "car_repair",
-    "auto shop": "car_repair",
-    "car wash": "car_wash",
-    "car detailing": "car_wash",
-    "detailing": "car_wash",
-    "tire shop": "car_repair",
-    "tires": "car_repair",
-    "auto parts": "car_repair",
-    "car rental": "car_rental",
-    "rental car": "car_rental",
-    "vehicle rental": "car_rental",
-    
-    # Banking & Finance
-    "bank": "bank",
-    "atm": "atm",
-    "atm machine": "atm",
-    "credit union": "bank",
-    "savings bank": "bank",
-    
-    # Entertainment
-    "movie theater": "movie_theater",
-    "cinema": "movie_theater",
-    "movies": "movie_theater",
-    "theater": "movie_theater",
-    "art gallery": "art_gallery",
-    "gallery": "art_gallery",
-    "museum": "museum",
-    "aquarium": "aquarium",
-    "zoo": "zoo",
-    
-    # Services
-    "post office": "post_office",
-    "postal": "post_office",
-    "mail": "post_office",
-    "laundromat": "laundry",
-    "laundry": "laundry",
-    "dry cleaning": "laundry",
-    "dry cleaner": "laundry",
-    "car parking": "parking",
-    "parking": "parking",
-    "parking lot": "parking",
-    "parking garage": "parking",
-    "plumber": "plumber",
-    "plumbing": "plumber",
-    "electrician": "electrician",
-    "electrical": "electrician",
-    "locksmith": "locksmith",
-    "locks": "locksmith",
-    "roofing": "roofing",
-    "roofer": "roofing",
-    "painter": "painter",
-    "painting": "painter",
-    "carpenter": "carpenter",
-    "carpentry": "carpenter",
-    "contractor": "general_contractor",
-    "general contractor": "general_contractor",
-    "landscaping": "landscaping",
-    "landscaper": "landscaping",
-    "florist": "florist",
-    "flowers": "florist",
-    "florist shop": "florist",
-    
-    # Food Delivery & Takeout
-    "bakery shop": "bakery",
-    "pizza": "restaurant",
-    "pizza shop": "restaurant",
-    "fast food": "restaurant",
-    "burger": "restaurant",
-    "chicken": "restaurant",
-    "chinese": "restaurant",
-    "japanese": "restaurant",
-    "mexican": "restaurant",
-    "thai": "restaurant",
-    "italian": "restaurant",
-    "indian": "restaurant",
-    "sushi": "restaurant",
-    "ramen": "restaurant",
-    "korean": "restaurant",
-    "vietnamese": "restaurant",
-    "mediterranean": "restaurant",
-    "seafood": "restaurant",
-    "steakhouse": "restaurant",
-    "vegetarian": "restaurant",
-    "vegan": "restaurant",
-    "organic": "restaurant",
-    
-    # Education
-    "school": "school",
-    "primary school": "school",
-    "secondary school": "school",
-    "university": "school",
-    "college": "school",
-    "vocational school": "school",
-    "language school": "school",
-    
-    # Transportation
-    "taxi": "taxi_stand",
-    "taxi stand": "taxi_stand",
-    "bus station": "transit_station",
-    "train station": "transit_station",
-    "railway": "transit_station",
-    "subway": "transit_station",
-    "metro": "transit_station",
-    "airport": "airport",
-    
-    # Real Estate
-    "real estate": "real_estate_agency",
-    "realtor": "real_estate_agency",
-    "real estate office": "real_estate_agency",
-    
-    # Government & Public Services
-    "police": "police",
-    "police station": "police",
-    "fire station": "fire_station",
-    "courthouse": "courthouse",
-    "town hall": "town_hall",
-    "government": "town_hall",
-    "city hall": "town_hall",
-    
-    # Lodging & Dining Combined
-    "restaurant and bar": "bar",
-    "cafe and bakery": "cafe",
-}
-
-
-# Mapping of cuisine types to search keywords for better filtering
-# When a cuisine is specified, Google Places API will search using these keywords
-CUISINE_KEYWORDS = {
-    "chinese": "chinese restaurant",
-    "japanese": "japanese restaurant",
-    "mexican": "mexican restaurant",
-    "thai": "thai restaurant",
-    "italian": "italian restaurant",
-    "indian": "indian restaurant",
-    "sushi": "sushi",
-    "ramen": "ramen",
-    "korean": "korean restaurant",
-    "vietnamese": "vietnamese restaurant",
-    "mediterranean": "mediterranean restaurant",
-    "seafood": "seafood restaurant",
-    "steakhouse": "steakhouse",
-    "vegetarian": "vegetarian restaurant",
-    "vegan": "vegan restaurant",
-    "organic": "organic restaurant",
-    "pizza": "pizza",
-    "pizza shop": "pizza",
-    "burger": "burger restaurant",
-    "chicken": "chicken restaurant",
-    "fast food": "fast food",
-}
-
-
 class ConfirmUserLocationInput(BaseModel):
     """Input model for confirming/getting user location."""
     address: Optional[str] = Field(
@@ -338,25 +53,11 @@ class ConfirmUserLocationInput(BaseModel):
 
 class GetServiceRecommendationInput(BaseModel):
     """Input model for getting service recommendations."""
-    service_type: str = Field(
+    keyword: str = Field(
         description=(
-            "Type of service to search for. Comprehensive support for all service types including: "
-            "Accommodation (hotel, motel, hostel, inn, resort), "
-            "Food & Beverage with full cuisine support (restaurant, cafe, bakery, bar, nightclub, "
-            "chinese, japanese, mexican, thai, italian, indian, sushi, ramen, korean, vietnamese, "
-            "mediterranean, seafood, steakhouse, vegetarian, vegan, organic, pizza, burger, chicken, fast food), "
-            "Beauty & Personal Care (barbershop, hair salon, beauty salon, spa, nail salon), "
-            "Health & Medical (hospital, dentist, doctor, clinic, veterinary, pharmacy), "
-            "Fitness & Recreation (gym, yoga, swimming pool, bowling, amusement park, stadium), "
-            "Shopping (grocery, supermarket, mall, clothing, electronics, bookstore, jewelry, furniture, hardware, pet store, toy store), "
-            "Automotive (gas station, car repair, car wash, car rental), "
-            "Banking & Finance (bank, atm, credit union), "
-            "Entertainment (movie theater, art gallery, museum, aquarium, zoo), "
-            "Services (post office, laundry, parking, plumber, electrician, locksmith, painter, carpenter, landscaper, florist), "
-            "Education (school, university, college), "
-            "Transportation (taxi, bus station, train station, airport), "
-            "and Government services. For cuisine types, the system automatically filters to show only that cuisine type, "
-            "avoiding unrelated results like hotels or stores."
+            "Search keyword for the service you're looking for. Examples: 'dessert', 'ice cream', 'bakery', "
+            "'restaurant', 'coffee shop', 'gym', 'hospital', 'hotel', 'pizza', 'thai food', etc. "
+            "Any natural language search term is supported. The system will search Google Places for matching services."
         ),
     )
     location: Optional[str] = Field(
@@ -580,19 +281,6 @@ def _format_place_result(place_data: dict) -> dict:
     }
 
 
-def _get_cuisine_keyword(service_type: str) -> Optional[str]:
-    """Get cuisine keyword for search filtering.
-    
-    Args:
-        service_type: The requested service type
-        
-    Returns:
-        Cuisine keyword for filtering, or None if not a cuisine type
-    """
-    service_lower = service_type.lower().strip()
-    return CUISINE_KEYWORDS.get(service_lower)
-
-
 def _lookup_place_id_by_name(
     gmaps_client: googlemaps.Client,
     place_name: str,
@@ -717,7 +405,7 @@ def _confirm_user_location_impl(
 @trace_span("tool_get_service_recommendations")
 def _get_service_recommendations_impl(
     gmaps_client: googlemaps.Client,
-    service_type: str,
+    keyword: str,
     location: Optional[str],
     zip_code: Optional[str],
     city: Optional[str],
@@ -728,16 +416,9 @@ def _get_service_recommendations_impl(
     max_results: int,
     user_location: Optional[tuple[float, float]],
 ) -> str:
-    """Get service recommendations based on location and service type."""
-    # Map user-friendly service type to Google Places API type
-    service_lower = service_type.lower().strip()
-    api_service_type = SERVICE_TYPE_MAPPING.get(service_lower)
-    if not api_service_type:
-        # Try direct match if mapping not found
-        api_service_type = service_lower
-    
-    # Check if this is a cuisine-specific search
-    cuisine_keyword = _get_cuisine_keyword(service_type)
+    """Get service recommendations based on location and keyword."""
+    # Normalize the keyword
+    final_search_keyword = keyword.lower().strip()
     
     # Determine search location
     search_lat, search_lng = None, None
@@ -785,23 +466,13 @@ def _get_service_recommendations_impl(
         )
 
     try:
-        # Search for nearby places
-        # For cuisine-specific searches, use keyword to filter results better
-        if cuisine_keyword:
-            places_result = gmaps_client.places_nearby(
-                location=(search_lat, search_lng),
-                radius=radius_meters,
-                keyword=cuisine_keyword,
-                type="restaurant",
-                rank_by=None,  # Use radius ranking
-            )
-        else:
-            places_result = gmaps_client.places_nearby(
-                location=(search_lat, search_lng),
-                radius=radius_meters,
-                type=api_service_type,
-                rank_by=None,  # Use radius ranking
-            )
+        # Search for nearby places using the determined search keyword
+        places_result = gmaps_client.places_nearby(
+            location=(search_lat, search_lng),
+            radius=radius_meters,
+            keyword=final_search_keyword,
+            rank_by=None,  # Use radius ranking
+        )
 
         if places_result["status"] != "OK":
             message = places_result.get("error_message", "No results found.")
@@ -826,7 +497,7 @@ def _get_service_recommendations_impl(
             
             return _json_tool_response(
                 status="no_results",
-                message=f"No {service_type} services found near {location_info} within {radius_meters}m. Try expanding the search radius or providing a different location.",
+                message=f"No results for '{keyword}' found near {location_info} within {radius_meters}m. Try expanding the search radius or providing a different location.",
                 search_location={
                     "latitude": search_lat,
                     "longitude": search_lng,
@@ -837,12 +508,12 @@ def _get_service_recommendations_impl(
 
         return _json_tool_response(
             status="success",
-            message=f"Found {len(formatted_places)} {service_type} services nearby.",
+            message=f"Found {len(formatted_places)} results for '{keyword}' nearby.",
             search_location={
                 "latitude": search_lat,
                 "longitude": search_lng,
             },
-            service_type=service_type,
+            keyword=keyword,
             radius_meters=radius_meters,
             recommendations=formatted_places,
         )
@@ -999,7 +670,7 @@ def build_location_tools(
 
     @tool(args_schema=GetServiceRecommendationInput)
     def get_service_recommendations(
-        service_type: str,
+        keyword: str,
         location: Optional[str] = None,
         zip_code: Optional[str] = None,
         city: Optional[str] = None,
@@ -1009,25 +680,19 @@ def build_location_tools(
         radius_meters: int = 5000,
         max_results: int = 5,
     ) -> str:
-        """Find nearby services and businesses based on type and location.
+        """Find nearby services and businesses based on keyword and location.
         
-        Searches for nearby services with smart filtering. For cuisine-specific searches
-        (e.g., 'vietnamese restaurant', 'thai food'), the system uses keyword filtering to
-        return only that cuisine type, avoiding unrelated results like hotels or other stores.
+        Searches for nearby services using natural language keywords. Supports any search term
+        like 'dessert', 'ice cream', 'bakery', 'restaurant', 'coffee', 'gym', 'hospital', etc.
+        The system converts these terms to appropriate Google Places search queries.
 
         Use this tool ONLY when the user is searching/discovering options.
         Do NOT use this tool for follow-up details about a specific already-listed place.
         For follow-up detail requests, use get_place_details with the relevant place_id.
         
-        Supported service types: barbershop, hair salon, beauty salon, restaurant,
-        mechanic, car repair, grocery store, gas station, pharmacy, coffee shop, cafe,
-        hotel, hospital, dentist, gym, doctor, and more. Full cuisine support includes:
-        chinese, japanese, mexican, thai, italian, indian, sushi, ramen, korean, vietnamese,
-        mediterranean, seafood, steakhouse, vegetarian, vegan, organic, pizza, burger, and more.
-        
         Args:
-            service_type: Type of service to search for (required). For cuisine types,
-                         specify exactly the cuisine name (e.g., 'vietnamese', 'thai')
+            keyword: Search keyword for the service (required). Examples: 'dessert', 'pizza',
+                    'gym', 'hospital', 'coffee shop', 'thai restaurant', etc.
             location: Location address or name to search from
             zip_code: ZIP/postal code to search around (can be combined with city/state)
             city: City name to improve zip code search accuracy
@@ -1042,7 +707,7 @@ def build_location_tools(
         """
         return _get_service_recommendations_impl(
             gmaps_client=gmaps_client,
-            service_type=service_type,
+            keyword=keyword,
             location=location,
             zip_code=zip_code,
             city=city,
