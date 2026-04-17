@@ -204,6 +204,37 @@ class ListAgentEventsInput(BaseModel):
 
 
 class GetEventDetailsInput(BaseModel):
+    """Query calendar events by date/time range and/or text filters.
+    
+    USAGE EXAMPLES:
+    
+    1. FOR A SPECIFIC DAY (e.g., "What events on Thursday?"):
+       - start_date: "2026-04-16"
+       - end_date: "2026-04-16"  (same as start_date)
+       - start_time: "00:00"
+       - end_time: "23:59"
+       Returns all events on that day.
+    
+    2. FOR A DATE RANGE (e.g., "Events next week?"):
+       - start_date: "2026-04-14"
+       - end_date: "2026-04-20"
+       - start_time: "00:00"
+       - end_time: "23:59"
+       Returns all events in that date range.
+    
+    3. FOR TIME OF DAY (e.g., "What's on my calendar this afternoon?"):
+       - start_date: "2026-04-16"
+       - end_date: "2026-04-16"  (same day)
+       - start_time: "12:00"
+       - end_time: "18:00"
+       Returns events in that time window.
+    
+    4. WITH TEXT FILTERS (e.g., "Find dinner events on Friday"):
+       - start_date: "2026-04-18"
+       - end_date: "2026-04-18"
+       - title: "dinner"
+       Returns events matching "dinner" on that day.
+    """
     start_date: Optional[str] = Field(
         default=None,
         description="Optional start date (YYYY-MM-DD).",
@@ -523,7 +554,6 @@ def _get_user_calendar_impl(
             "location": event.location,
             "description": event.description,
             "invitees": event.invitees,
-            "htmlLink": event.html_link,
         }
         for event in events
     ]
@@ -664,7 +694,6 @@ def _add_event_to_calendar_impl(
             "location": created_event.location,
             "description": created_event.description,
             "invitees": created_event.invitees,
-            "htmlLink": created_event.html_link,
         },
     )
 
@@ -903,7 +932,6 @@ def _modify_event_impl(
                     "description": modified_event.description,
                     "location": modified_event.location,
                     "invitees": modified_event.invitees,
-                    "htmlLink": modified_event.html_link,
                 },
             )
     except ValueError as exc:
@@ -979,7 +1007,6 @@ def _modify_event_impl(
             "location": modified_event.location,
             "description": modified_event.description,
             "invitees": modified_event.invitees,
-            "htmlLink": modified_event.html_link,
         },
         changes=changes,
     )
@@ -1651,7 +1678,6 @@ def _get_event_details_impl(
                 "description": event.description or "",
                 "invitees": event.invitees or [],
                 "status": event.status,
-                "htmlLink": event.html_link,
             }
             for event in matching_events
         ]
