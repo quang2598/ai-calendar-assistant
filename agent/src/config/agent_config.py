@@ -14,7 +14,7 @@ class AgentSettings(BaseSettings):
 
     agent_llm_model: str = Field(default="llama3.1", alias="AGENT_LLM_MODEL")
     agent_llm_temperature: float = Field(
-        default=0.2,
+        default=0.1,
         ge=0.0,
         le=1.0,
         alias="AGENT_LLM_TEMPERATURE",
