@@ -9,6 +9,7 @@ type HistoryPanelProps = {
 };
 
 const ROLLBACK_WINDOW_MS = 60 * 60 * 1000; // 1 hour
+const INITIAL_ACTIONS_COUNT = 20;
 
 export default function HistoryPanel({ uid, idToken }: HistoryPanelProps) {
   const [actionHistory, setActionHistory] = useState<ActionHistoryRecord[]>([]);
@@ -19,6 +20,8 @@ export default function HistoryPanel({ uid, idToken }: HistoryPanelProps) {
   const [expandedDescriptionId, setExpandedDescriptionId] = useState<
     string | null
   >(null);
+  const [displayedCount, setDisplayedCount] = useState(INITIAL_ACTIONS_COUNT);
+  const [hasMore, setHasMore] = useState(false);
 
   useEffect(() => {
     if (!uid || !idToken) return;
@@ -28,7 +31,7 @@ export default function HistoryPanel({ uid, idToken }: HistoryPanelProps) {
         setIsLoading(true);
         setError(null);
 
-        const response = await fetch("/api/calendar/history", {
+        const response = await fetch(`/api/calendar/history?limit=${displayedCount}`, {
           method: "GET",
           headers: {
             "Content-Type": "application/json",
@@ -45,6 +48,7 @@ export default function HistoryPanel({ uid, idToken }: HistoryPanelProps) {
 
         const data = await response.json();
         setActionHistory(data.actionHistory || []);
+        setHasMore(data.hasMore ?? false);
       } catch (err) {
         setError(err instanceof Error ? err.message : "An error occurred");
       } finally {
@@ -53,7 +57,7 @@ export default function HistoryPanel({ uid, idToken }: HistoryPanelProps) {
     };
 
     fetchActionHistory();
-  }, [uid, idToken]);
+  }, [uid, idToken, displayedCount]);
 
   const isActionEligibleForRollback = (
     action: ActionHistoryRecord,
@@ -300,6 +304,16 @@ export default function HistoryPanel({ uid, idToken }: HistoryPanelProps) {
                 </div>
               );
             })}
+            
+            {hasMore && (
+              <button
+                type="button"
+                onClick={() => setDisplayedCount((prev) => prev + 20)}
+                className="w-full mt-2 px-4 py-2 rounded-lg border border-slate-700 bg-slate-900/50 text-sm text-slate-300 hover:bg-slate-900 hover:border-slate-600 transition"
+              >
+                Show More (20 more)
+              </button>
+            )}
           </div>
         )}
       </div>

@@ -24,16 +24,26 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     const firebaseIdToken = parseBearerToken(request);
     const decoded = await verifyFirebaseIdToken(firebaseIdToken);
 
-    // Fetch action history from Firestore sub-collection
+    // Parse limit from query parameters (default 20)
+    const url = new URL(request.url);
+    const limitParam = url.searchParams.get("limit");
+    const limit = limitParam ? Math.min(parseInt(limitParam, 10) || 20, 100) : 20;
+
+    // Fetch one extra item to detect if there are more results
     const actionHistoryRef = adminDb
       .collection("users")
       .doc(decoded.uid)
       .collection("action-history")
-      .orderBy("createdAt", "desc");
+      .orderBy("createdAt", "desc")
+      .limit(limit + 1);
 
     const snapshot = await actionHistoryRef.get();
 
-    const actionHistory = snapshot.docs.map((doc) => {
+    // Check if there are more results beyond the limit
+    const hasMore = snapshot.docs.length > limit;
+    
+    // Return only the requested number of items
+    const actionHistory = snapshot.docs.slice(0, limit).map((doc) => {
       const data = doc.data();
       return {
         id: doc.id,
@@ -46,7 +56,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       };
     });
 
-    return NextResponse.json({ actionHistory }, { status: 200 });
+    return NextResponse.json({ actionHistory, hasMore }, { status: 200 });
   } catch (error) {
     const message =
       error instanceof Error
