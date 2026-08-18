@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>VietCalenAI - Side Panel</title>
+  <link rel="stylesheet" href="sidepanel.css" />
+</head>
+<body>
+  <!-- Auth Screen -->
+  <div id="auth-screen" class="screen">
+    <div class="auth-container">
+      <div class="logo">
+        <svg width="48" height="48" viewBox="0 0 40 40" fill="none">
+          <rect width="40" height="40" rx="10" fill="#22d3ee"/>
+          <text x="50%" y="55%" dominant-baseline="middle" text-anchor="middle" fill="#0f172a" font-size="18" font-weight="bold">V</text>
+        </svg>
+      </div>
+      <h1 class="app-title">VietCalenAI</h1>
+      <p class="app-subtitle">AI Calendar Assistant</p>
+      <button id="btn-sign-in" class="btn-google">
+        <svg width="18" height="18" viewBox="0 0 18 18" class="google-icon">
+          <path d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844c-.209 1.125-.843 2.078-1.796 2.717v2.258h2.908c1.702-1.567 2.684-3.874 2.684-6.615z" fill="#4285F4"/>
+          <path d="M9 18c2.43 0 4.467-.806 5.956-2.18l-2.908-2.259c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 8.997 0 0 0 9 18z" fill="#34A853"/>
+          <path d="M3.964 10.71A5.41 5.41 0 0 1 3.682 9c0-.593.102-1.17.282-1.71V4.958H.957A8.996 8.996 0 0 0 0 9c0 1.452.348 2.827.957 4.042l3.007-2.332z" fill="#FBBC05"/>
+          <path d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 0 0 .957 4.958L3.964 6.29C4.672 4.163 6.656 2.58 9 3.58z" fill="#EA4335"/>
+        </svg>
+        Sign in with Google
+      </button>
+    </div>
+  </div>
+
+  <!-- Main Screen -->
+  <div id="main-screen" class="screen hidden">
+    <!-- Tab Bar -->
+    <div class="tab-bar">
+      <button class="tab active" data-tab="events">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
+          <line x1="16" y1="2" x2="16" y2="6"/>
+          <line x1="8" y1="2" x2="8" y2="6"/>
+          <line x1="3" y1="10" x2="21" y2="10"/>
+        </svg>
+        Events
+      </button>
+      <button class="tab" data-tab="history">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="10"/>
+          <polyline points="12 6 12 12 16 14"/>
+        </svg>
+        History
+      </button>
+    </div>
+
+    <!-- Events Tab -->
+    <div id="tab-events" class="tab-content active">
+      <div class="card calendar-card">
+        <div class="calendar-header">
+          <button id="btn-prev-month" class="btn-cal-nav">&lt;</button>
+          <span id="calendar-month-label" class="calendar-month-label"></span>
+          <button id="btn-next-month" class="btn-cal-nav">&gt;</button>
+        </div>
+        <div class="calendar-grid">
+          <div class="cal-weekdays">
+            <span>Su</span><span>Mo</span><span>Tu</span><span>We</span>
+            <span>Th</span><span>Fr</span><span>Sa</span>
+          </div>
+          <div id="calendar-days" class="cal-days"></div>
+        </div>
+      </div>
+      <div class="card events-card">
+        <div class="card-header">
+          <h3 id="events-date-label">Today's Events</h3>
+        </div>
+        <div id="events-list" class="events-list">
+          <div class="empty-state">No events for this day</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- History Tab -->
+    <div id="tab-history" class="tab-content">
+      <!-- Conversation List View -->
+      <div id="history-list-view">
+        <div class="card history-card">
+          <div class="card-header">
+            <h3>Chat History</h3>
+          </div>
+          <div id="history-list" class="history-list">
+            <div class="empty-state">No conversations yet</div>
+          </div>
+        </div>
+      </div>
+      <!-- Conversation Messages View (drill-down) -->
+      <div id="history-messages-view" class="hidden">
+        <div class="messages-header">
+          <button id="btn-back-history" class="btn-back" title="Back to conversations">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="15 18 9 12 15 6"/>
+            </svg>
+          </button>
+          <span id="messages-conv-title" class="messages-conv-title">Conversation</span>
+        </div>
+        <div id="messages-list" class="messages-list"></div>
+        <div class="conv-composer">
+          <div class="conv-composer-inner">
+            <textarea id="conv-input" placeholder="Continue conversation..." rows="1"></textarea>
+            <button id="btn-conv-mic" class="btn-conv-action" title="Voice input">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+                <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+                <line x1="12" y1="19" x2="12" y2="23"/>
+                <line x1="8" y1="23" x2="16" y2="23"/>
+              </svg>
+            </button>
+            <button id="btn-conv-send" class="btn-conv-action btn-conv-send" title="Send">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="22" y1="2" x2="11" y2="13"/>
+                <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+              </svg>
+            </button>
+          </div>
+          <!-- Voice overlay -->
+          <div id="conv-voice-overlay" class="conv-voice-overlay hidden">
+            <div class="conv-voice-bars" id="conv-voice-bars"></div>
+            <button id="btn-conv-voice-stop" class="btn-conv-voice-stop">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                <rect x="6" y="6" width="12" height="12" rx="2"/>
+              </svg>
+            </button>
+            <span class="conv-voice-label">Listening...</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="sidepanel.js"></script>
+</body>
+</html>
